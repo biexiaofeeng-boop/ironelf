@@ -431,7 +431,14 @@ impl CreateJobTool {
 
         // Create the container job with the pre-determined job_id.
         let _token = jm
-            .create_job(job_id, task, Some(project_dir), mode, credential_grants)
+            .create_job(
+                job_id,
+                task,
+                Some(project_dir),
+                mode,
+                None,
+                credential_grants,
+            )
             .await
             .map_err(|e| {
                 self.update_status(

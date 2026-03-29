@@ -40,6 +40,8 @@ RUN apt-get update \
     python3-pip \
     python3-venv \
     gh \
+    && command -v node \
+    && command -v npm \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Rust toolchain for the sandbox user
@@ -50,7 +52,9 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --de
     && chmod -R a+r /usr/local/rustup /usr/local/cargo
 
 # Install Claude Code CLI (for claude-bridge mode)
-RUN npm install -g @anthropic-ai/claude-code@latest
+RUN npm install -g @anthropic-ai/claude-code@latest \
+    && command -v claude \
+    && claude --version >/dev/null
 
 # Copy the binary
 COPY --from=builder /build/target/release/ironclaw /usr/local/bin/ironclaw
@@ -64,6 +68,9 @@ RUN useradd -m -u 1000 -s /bin/bash sandbox \
 
 USER sandbox
 WORKDIR /workspace
+ENV HOME=/home/sandbox \
+    USER=sandbox \
+    LOGNAME=sandbox
 
 # The orchestrator passes the full command via Docker cmd.
 ENTRYPOINT ["ironclaw"]

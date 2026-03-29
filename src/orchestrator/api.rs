@@ -207,8 +207,17 @@ async fn report_status(
     Path(job_id): Path<Uuid>,
     Json(update): Json<StatusUpdate>,
 ) -> Result<StatusCode, StatusCode> {
+    let handle = state.job_manager.get_handle(job_id).await;
     tracing::debug!(
+        execution_id = handle
+            .as_ref()
+            .and_then(|handle| handle.execution_id.as_deref())
+            .unwrap_or("unknown"),
         job_id = %job_id,
+        job_mode = handle
+            .as_ref()
+            .map(|handle| handle.mode.as_str())
+            .unwrap_or("unknown"),
         state = %update.state,
         iteration = update.iteration,
         "Worker status update"
@@ -227,17 +236,59 @@ async fn report_complete(
     Path(job_id): Path<Uuid>,
     Json(report): Json<CompletionReport>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    let handle = state.job_manager.get_handle(job_id).await;
+    let execution_id = handle
+        .as_ref()
+        .and_then(|handle| handle.execution_id.as_deref())
+        .unwrap_or("unknown");
+    let job_mode = handle
+        .as_ref()
+        .map(|handle| handle.mode.as_str())
+        .unwrap_or("unknown");
+
     if report.success {
         tracing::info!(
+            execution_id,
             job_id = %job_id,
+            job_mode,
             "Worker reported job complete"
         );
     } else {
         tracing::warn!(
+            execution_id,
             job_id = %job_id,
+            job_mode,
             message = ?report.message,
             "Worker reported job failure"
         );
+    }
+
+    if let Some(store) = state.store.as_ref() {
+        let status = if report.success {
+            "completed"
+        } else {
+            "failed"
+        };
+        let message = report.message.clone();
+        if let Err(e) = store
+            .update_sandbox_job_status(
+                job_id,
+                status,
+                Some(report.success),
+                message.as_deref(),
+                None,
+                Some(chrono::Utc::now()),
+            )
+            .await
+        {
+            tracing::warn!(
+                execution_id,
+                job_id = %job_id,
+                job_mode,
+                error = %e,
+                "Failed to persist terminal sandbox status from worker completion"
+            );
+        }
     }
 
     // Store the result and clean up the container
@@ -246,7 +297,13 @@ async fn report_complete(
         message: report.message.clone(),
     };
     if let Err(e) = state.job_manager.complete_job(job_id, result).await {
-        tracing::error!(job_id = %job_id, "Failed to complete job cleanup: {}", e);
+        tracing::error!(
+            execution_id,
+            job_id = %job_id,
+            job_mode,
+            error = %e,
+            "Failed to complete job cleanup"
+        );
     }
 
     Ok(Json(serde_json::json!({"status": "ok"})))
@@ -260,8 +317,17 @@ async fn job_event_handler(
     Path(job_id): Path<Uuid>,
     Json(payload): Json<JobEventPayload>,
 ) -> Result<StatusCode, StatusCode> {
+    let handle = state.job_manager.get_handle(job_id).await;
     tracing::debug!(
+        execution_id = handle
+            .as_ref()
+            .and_then(|handle| handle.execution_id.as_deref())
+            .unwrap_or("unknown"),
         job_id = %job_id,
+        job_mode = handle
+            .as_ref()
+            .map(|handle| handle.mode.as_str())
+            .unwrap_or("unknown"),
         event_type = %payload.event_type,
         "Job event received"
     );
@@ -951,6 +1017,7 @@ mod tests {
                 job_id,
                 crate::orchestrator::job_manager::ContainerHandle {
                     job_id,
+                    execution_id: None,
                     container_id: "test-container".to_string(),
                     state: crate::orchestrator::job_manager::ContainerState::Running,
                     mode: crate::orchestrator::job_manager::JobMode::Worker,

@@ -213,6 +213,14 @@ struct MergedEvent {
     event: ExecutionEvent,
 }
 
+#[derive(Debug, Clone)]
+struct TerminalOutcome {
+    status: BridgeExecutionStatus,
+    summary: String,
+    event_type: &'static str,
+    payload: Value,
+}
+
 impl BridgeExecutionStatus {
     fn as_str(self) -> &'static str {
         match self {
@@ -493,6 +501,15 @@ impl RuntimeBridgeManager {
         })?;
         let mode = select_job_mode(&request.tool_hints);
         let now = Utc::now();
+
+        tracing::info!(
+            execution_id = %request.execution_id,
+            job_id = %job_id,
+            job_mode = %mode,
+            tool_hints = ?request.tool_hints,
+            timeout_s,
+            "Runtime bridge admitted execution"
+        );
 
         let sandbox_record = SandboxJobRecord {
             id: job_id,
@@ -966,14 +983,32 @@ impl RuntimeBridgeManager {
                     task,
                     Some(project_dir.clone()),
                     mode,
+                    Some(execution_id.to_string()),
                     Vec::<CredentialGrant>::new(),
                 )
                 .await
             {
-                Ok(_) => return Ok(()),
+                Ok(_) => {
+                    tracing::info!(
+                        execution_id,
+                        job_id = %job_id,
+                        job_mode = %mode,
+                        attempt,
+                        "Runtime bridge launched container"
+                    );
+                    return Ok(());
+                }
                 Err(e) => {
                     let message = e.to_string();
                     last_error = Some(message.clone());
+                    tracing::warn!(
+                        execution_id,
+                        job_id = %job_id,
+                        job_mode = %mode,
+                        attempt,
+                        error = %message,
+                        "Runtime bridge failed to launch container"
+                    );
                     if attempt < CREATE_JOB_MAX_ATTEMPTS {
                         let mut records = self.records.write().await;
                         if let Some(record) = records.get_mut(execution_id) {
@@ -1053,7 +1088,15 @@ impl RuntimeBridgeManager {
             return Ok(());
         }
 
+        let job_mode = inferred_job_mode(&record, None, None);
         if let Some(job_id) = record.job_id {
+            tracing::warn!(
+                execution_id,
+                job_id = %job_id,
+                job_mode,
+                timeout_s = record.timeout_s,
+                "Runtime bridge timeout watcher is stopping execution"
+            );
             if let Err(e) = job_manager.stop_job(job_id).await {
                 tracing::warn!(job_id = %job_id, error = %e, "Runtime bridge timeout failed to stop container cleanly");
             }
@@ -1081,6 +1124,7 @@ impl RuntimeBridgeManager {
                 "message": format!("Execution exceeded timeout of {}s", record.timeout_s),
                 "timeout_s": record.timeout_s,
                 "job_id": record.job_id.map(|id| id.to_string()),
+                "job_mode": job_mode,
             }),
         )
         .await
@@ -1134,165 +1178,198 @@ impl RuntimeBridgeManager {
             None
         };
 
-        if let Some(handle) = handle {
-            if let Some(result) = handle.completion_result.clone() {
-                let status = if result.success {
-                    BridgeExecutionStatus::Succeeded
-                } else {
-                    BridgeExecutionStatus::Failed
-                };
-                let summary = result.message.clone().unwrap_or_else(|| {
-                    if result.success {
-                        "Execution completed successfully".to_string()
-                    } else {
-                        "Execution failed inside the runtime plane".to_string()
-                    }
-                });
-                if let Some(store) = store.as_ref() {
-                    let db_status = if result.success {
-                        "completed"
-                    } else {
-                        "failed"
-                    };
-                    let db_message = summary.clone();
-                    if let Err(e) = store
-                        .update_sandbox_job_status(
-                            job_id,
-                            db_status,
-                            Some(result.success),
-                            Some(&db_message),
-                            None,
-                            Some(Utc::now()),
-                        )
-                        .await
-                    {
-                        tracing::warn!(job_id = %job_id, error = %e, "Runtime bridge failed to backfill terminal sandbox status");
-                    }
-                }
-                self.finalize_execution(
-                    execution_id,
-                    status,
-                    summary.clone(),
-                    "result",
-                    json!({
-                        "message": summary,
-                        "job_id": job_id.to_string(),
-                        "job_mode": handle.mode.as_str(),
-                    }),
+        let recent_job_events = if let Some(store) = store.clone() {
+            Some(store.list_job_events(job_id, Some(20)).await.map_err(|e| {
+                BridgeResponseError::new(
+                    500,
+                    "runtime_events_failed",
+                    format!("Failed to load runtime event history: {e}"),
                 )
-                .await?;
-                return Ok(());
-            }
+                .with_execution_id(execution_id.to_string())
+            })?)
+        } else {
+            None
+        };
 
-            if matches!(
-                handle.state,
-                ContainerState::Stopped | ContainerState::Failed
-            ) {
-                let summary =
-                    "Runtime container stopped before reporting a final receipt".to_string();
-                if let Some(store) = store.as_ref()
-                    && let Err(e) = store
-                        .update_sandbox_job_status(
-                            job_id,
-                            "failed",
-                            Some(false),
-                            Some(&summary),
-                            None,
-                            Some(Utc::now()),
-                        )
-                        .await
-                {
-                    tracing::warn!(job_id = %job_id, error = %e, "Runtime bridge failed to persist unexpected stop");
+        let job_mode = inferred_job_mode(&record, handle.as_ref().map(|h| h.mode), None);
+
+        tracing::debug!(
+            execution_id,
+            job_id = %job_id,
+            job_mode,
+            handle_present = handle.is_some(),
+            sandbox_status = sandbox_job.as_ref().map(|job| job.status.as_str()).unwrap_or("missing"),
+            completion_reported = handle
+                .as_ref()
+                .and_then(|h| h.completion_result.as_ref())
+                .is_some(),
+            recent_event_count = recent_job_events.as_ref().map(Vec::len).unwrap_or(0),
+            "Runtime bridge reconciling execution"
+        );
+
+        if let Some(handle) = handle.as_ref()
+            && let Some(result) = handle.completion_result.clone()
+        {
+            let status = if result.success {
+                BridgeExecutionStatus::Succeeded
+            } else {
+                BridgeExecutionStatus::Failed
+            };
+            let summary = result.message.clone().unwrap_or_else(|| {
+                if result.success {
+                    "Execution completed successfully".to_string()
+                } else {
+                    "Execution failed inside the runtime plane".to_string()
                 }
-                self.finalize_execution(
-                    execution_id,
-                    BridgeExecutionStatus::Failed,
-                    summary.clone(),
-                    "result",
-                    json!({
-                        "message": summary,
-                        "job_id": job_id.to_string(),
-                    }),
-                )
-                .await?;
-                return Ok(());
+            });
+            if let Some(store) = store.as_ref() {
+                let db_status = if result.success {
+                    "completed"
+                } else {
+                    "failed"
+                };
+                let db_message = summary.clone();
+                if let Err(e) = store
+                    .update_sandbox_job_status(
+                        job_id,
+                        db_status,
+                        Some(result.success),
+                        Some(&db_message),
+                        None,
+                        Some(Utc::now()),
+                    )
+                    .await
+                {
+                    tracing::warn!(job_id = %job_id, error = %e, "Runtime bridge failed to backfill terminal sandbox status");
+                }
             }
+            tracing::info!(
+                execution_id,
+                job_id = %job_id,
+                job_mode = handle.mode.as_str(),
+                terminal_status = status.as_str(),
+                "Runtime bridge finalized from worker completion report"
+            );
+            self.finalize_execution(
+                execution_id,
+                status,
+                summary.clone(),
+                "result",
+                json!({
+                    "message": summary,
+                    "job_id": job_id.to_string(),
+                    "job_mode": handle.mode.as_str(),
+                }),
+            )
+            .await?;
+            return Ok(());
         }
 
-        if let Some(sandbox_job) = sandbox_job {
-            let terminal = match sandbox_job.status.as_str() {
-                "completed" => Some(BridgeExecutionStatus::Succeeded),
-                "failed" => {
-                    if reason_mentions_timeout(sandbox_job.failure_reason.as_deref()) {
-                        Some(BridgeExecutionStatus::TimedOut)
-                    } else if reason_mentions_cancel(sandbox_job.failure_reason.as_deref()) {
-                        Some(BridgeExecutionStatus::Cancelled)
-                    } else {
-                        Some(BridgeExecutionStatus::Failed)
-                    }
-                }
-                "interrupted" => {
-                    if reason_mentions_cancel(sandbox_job.failure_reason.as_deref()) {
-                        Some(BridgeExecutionStatus::Cancelled)
-                    } else {
-                        Some(BridgeExecutionStatus::Failed)
-                    }
-                }
-                _ => None,
-            };
+        if let Some(outcome) = sandbox_job.as_ref().and_then(|job| {
+            terminal_outcome_from_sandbox_job(job, record.timeout_s, job_id, &job_mode)
+        }) {
+            tracing::info!(
+                execution_id,
+                job_id = %job_id,
+                job_mode,
+                terminal_status = outcome.status.as_str(),
+                "Runtime bridge finalized from persisted sandbox status"
+            );
+            self.finalize_execution(
+                execution_id,
+                outcome.status,
+                outcome.summary.clone(),
+                outcome.event_type,
+                outcome.payload,
+            )
+            .await?;
+            return Ok(());
+        }
 
-            if let Some(status) = terminal {
-                let summary = sandbox_job
-                    .failure_reason
-                    .clone()
-                    .unwrap_or_else(|| match status {
-                        BridgeExecutionStatus::Succeeded => {
-                            "Execution completed successfully".to_string()
-                        }
-                        BridgeExecutionStatus::Cancelled => "Execution was cancelled".to_string(),
-                        BridgeExecutionStatus::TimedOut => {
-                            format!("Execution timed out after {}s", record.timeout_s)
-                        }
-                        _ => "Execution ended with a runtime failure".to_string(),
-                    });
-                let event_type = match status {
-                    BridgeExecutionStatus::Cancelled => "cancel",
-                    BridgeExecutionStatus::TimedOut => "timeout",
-                    _ => "result",
+        if let Some(outcome) = recent_job_events
+            .as_ref()
+            .and_then(|events| terminal_outcome_from_job_events(events, job_id, &job_mode))
+        {
+            tracing::info!(
+                execution_id,
+                job_id = %job_id,
+                job_mode,
+                terminal_status = outcome.status.as_str(),
+                "Runtime bridge finalized from persisted runtime result event"
+            );
+            self.finalize_execution(
+                execution_id,
+                outcome.status,
+                outcome.summary.clone(),
+                outcome.event_type,
+                outcome.payload,
+            )
+            .await?;
+            return Ok(());
+        }
+
+        if let Some(handle) = handle.as_ref()
+            && matches!(
+                handle.state,
+                ContainerState::Stopped | ContainerState::Failed
+            )
+        {
+            let summary = "Runtime container stopped before reporting a final receipt".to_string();
+            if let Some(store) = store.as_ref()
+                && let Err(e) = store
+                    .update_sandbox_job_status(
+                        job_id,
+                        "failed",
+                        Some(false),
+                        Some(&summary),
+                        None,
+                        Some(Utc::now()),
+                    )
+                    .await
+            {
+                tracing::warn!(job_id = %job_id, error = %e, "Runtime bridge failed to persist unexpected stop");
+            }
+            tracing::warn!(
+                execution_id,
+                job_id = %job_id,
+                job_mode = handle.mode.as_str(),
+                container_state = %handle.state,
+                "Runtime bridge finalized unexpected container stop"
+            );
+            self.finalize_execution(
+                execution_id,
+                BridgeExecutionStatus::Failed,
+                summary.clone(),
+                "result",
+                json!({
+                    "message": summary,
+                    "job_id": job_id.to_string(),
+                    "job_mode": handle.mode.as_str(),
+                }),
+            )
+            .await?;
+            return Ok(());
+        }
+
+        if sandbox_job.is_some() {
+            let waiting_approval = self
+                .load_merged_events(&record, store.clone())
+                .await?
+                .iter()
+                .rev()
+                .find(|event| event.event.event_type == "status")
+                .map(|event| event.event.status == BridgeExecutionStatus::WaitingApproval.as_str())
+                .unwrap_or(false);
+
+            let mut records = self.records.write().await;
+            if let Some(current) = records.get_mut(execution_id)
+                && !current.status.is_terminal()
+            {
+                current.status = if waiting_approval {
+                    BridgeExecutionStatus::WaitingApproval
+                } else {
+                    BridgeExecutionStatus::Running
                 };
-                self.finalize_execution(
-                    execution_id,
-                    status,
-                    summary.clone(),
-                    event_type,
-                    json!({
-                        "message": summary,
-                        "job_id": job_id.to_string(),
-                    }),
-                )
-                .await?;
-            } else {
-                let waiting_approval = self
-                    .load_merged_events(&record, store.clone())
-                    .await?
-                    .iter()
-                    .rev()
-                    .find(|event| event.event.event_type == "status")
-                    .map(|event| {
-                        event.event.status == BridgeExecutionStatus::WaitingApproval.as_str()
-                    })
-                    .unwrap_or(false);
-
-                let mut records = self.records.write().await;
-                if let Some(current) = records.get_mut(execution_id)
-                    && !current.status.is_terminal()
-                {
-                    current.status = if waiting_approval {
-                        BridgeExecutionStatus::WaitingApproval
-                    } else {
-                        BridgeExecutionStatus::Running
-                    };
-                }
             }
         }
 
@@ -1527,9 +1604,12 @@ fn map_job_event(
         "tool_result" => ("tool_result".to_string(), BridgeExecutionStatus::Running),
         "reasoning" => ("reasoning".to_string(), BridgeExecutionStatus::Running),
         "result" => {
-            let status = match event.data.get("status").and_then(Value::as_str) {
-                Some("completed") => BridgeExecutionStatus::Succeeded,
-                Some("error") => BridgeExecutionStatus::Failed,
+            let status = match (
+                event.data.get("success").and_then(Value::as_bool),
+                event.data.get("status").and_then(Value::as_str),
+            ) {
+                (Some(true), _) | (_, Some("completed")) => BridgeExecutionStatus::Succeeded,
+                (Some(false), _) | (_, Some("error" | "failed")) => BridgeExecutionStatus::Failed,
                 _ => current_status,
             };
             ("result".to_string(), status)
@@ -1583,6 +1663,122 @@ fn collect_evidence_refs(data: &Value) -> Vec<Value> {
         }
     }
     evidence_refs
+}
+
+fn terminal_outcome_from_sandbox_job(
+    sandbox_job: &SandboxJobRecord,
+    timeout_s: u64,
+    job_id: Uuid,
+    job_mode: &str,
+) -> Option<TerminalOutcome> {
+    let status = match sandbox_job.status.as_str() {
+        "completed" => BridgeExecutionStatus::Succeeded,
+        "failed" => {
+            if reason_mentions_timeout(sandbox_job.failure_reason.as_deref()) {
+                BridgeExecutionStatus::TimedOut
+            } else if reason_mentions_cancel(sandbox_job.failure_reason.as_deref()) {
+                BridgeExecutionStatus::Cancelled
+            } else {
+                BridgeExecutionStatus::Failed
+            }
+        }
+        "interrupted" => {
+            if reason_mentions_cancel(sandbox_job.failure_reason.as_deref()) {
+                BridgeExecutionStatus::Cancelled
+            } else {
+                BridgeExecutionStatus::Failed
+            }
+        }
+        _ => return None,
+    };
+
+    let summary = sandbox_job
+        .failure_reason
+        .clone()
+        .unwrap_or_else(|| match status {
+            BridgeExecutionStatus::Succeeded => "Execution completed successfully".to_string(),
+            BridgeExecutionStatus::Cancelled => "Execution was cancelled".to_string(),
+            BridgeExecutionStatus::TimedOut => format!("Execution timed out after {timeout_s}s"),
+            _ => "Execution ended with a runtime failure".to_string(),
+        });
+
+    Some(TerminalOutcome {
+        status,
+        event_type: match status {
+            BridgeExecutionStatus::Cancelled => "cancel",
+            BridgeExecutionStatus::TimedOut => "timeout",
+            _ => "result",
+        },
+        payload: json!({
+            "message": summary,
+            "job_id": job_id.to_string(),
+            "job_mode": job_mode,
+        }),
+        summary,
+    })
+}
+
+fn terminal_outcome_from_job_events(
+    job_events: &[JobEventRecord],
+    job_id: Uuid,
+    job_mode: &str,
+) -> Option<TerminalOutcome> {
+    let event = job_events
+        .iter()
+        .rev()
+        .find(|event| event.event_type == "result" && event.data.is_object())?;
+
+    let status = match (
+        event.data.get("success").and_then(Value::as_bool),
+        event.data.get("status").and_then(Value::as_str),
+    ) {
+        (Some(true), _) | (_, Some("completed")) => BridgeExecutionStatus::Succeeded,
+        (Some(false), _) | (_, Some("error" | "failed")) => BridgeExecutionStatus::Failed,
+        _ => return None,
+    };
+
+    let summary = event
+        .data
+        .get("message")
+        .and_then(Value::as_str)
+        .or_else(|| event.data.get("content").and_then(Value::as_str))
+        .map(ToString::to_string)
+        .unwrap_or_else(|| match status {
+            BridgeExecutionStatus::Succeeded => "Execution completed successfully".to_string(),
+            _ => "Execution failed inside the runtime plane".to_string(),
+        });
+
+    let mut payload = event.data.clone();
+    if let Some(object) = payload.as_object_mut() {
+        object
+            .entry("job_id".to_string())
+            .or_insert_with(|| json!(job_id.to_string()));
+        object
+            .entry("job_mode".to_string())
+            .or_insert_with(|| json!(job_mode));
+    }
+
+    Some(TerminalOutcome {
+        status,
+        summary,
+        event_type: "result",
+        payload,
+    })
+}
+
+fn inferred_job_mode(
+    record: &ExecutionRecord,
+    handle_mode: Option<JobMode>,
+    store_mode: Option<&str>,
+) -> String {
+    handle_mode
+        .map(|mode| mode.as_str().to_string())
+        .or_else(|| store_mode.map(ToString::to_string))
+        .unwrap_or_else(|| {
+            select_job_mode(&record.request.tool_hints)
+                .as_str()
+                .to_string()
+        })
 }
 
 fn build_receipt(record: &ExecutionRecord, merged_events: &[MergedEvent]) -> ExecutionReceipt {
@@ -1825,6 +2021,52 @@ mod tests {
                     .contains(&"response".to_string()))
                 .unwrap_or(false)
         );
+    }
+
+    #[test]
+    fn map_job_event_treats_successful_result_as_succeeded() {
+        let request = sample_request();
+        let event = JobEventRecord {
+            id: 1,
+            job_id: Uuid::new_v4(),
+            event_type: "result".to_string(),
+            data: json!({
+                "success": true,
+                "message": "done",
+            }),
+            created_at: Utc::now(),
+        };
+
+        let mapped = map_job_event(&request, BridgeExecutionStatus::Running, &event);
+        assert_eq!(mapped.event.event_type, "result");
+        assert_eq!(
+            mapped.event.status,
+            BridgeExecutionStatus::Succeeded.as_str()
+        );
+    }
+
+    #[test]
+    fn terminal_outcome_from_job_events_uses_result_event_without_completion_report() {
+        let job_id = Uuid::new_v4();
+        let events = vec![JobEventRecord {
+            id: 7,
+            job_id,
+            event_type: "result".to_string(),
+            data: json!({
+                "success": false,
+                "message": "Execution failed: tool timed out",
+            }),
+            created_at: Utc::now(),
+        }];
+
+        let outcome = terminal_outcome_from_job_events(&events, job_id, "worker")
+            .unwrap_or_else(|| panic!("expected terminal outcome from result event"));
+
+        assert_eq!(outcome.status, BridgeExecutionStatus::Failed);
+        assert_eq!(outcome.event_type, "result");
+        assert_eq!(outcome.summary, "Execution failed: tool timed out");
+        assert_eq!(outcome.payload["job_id"], json!(job_id.to_string()));
+        assert_eq!(outcome.payload["job_mode"], json!("worker"));
     }
 
     #[tokio::test]
