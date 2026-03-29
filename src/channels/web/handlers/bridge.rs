@@ -10,9 +10,8 @@ use serde::Deserialize;
 use crate::channels::web::auth::AuthenticatedUser;
 use crate::channels::web::server::GatewayState;
 use crate::runtime_bridge::{
-    BridgeResponseError, ExecutionRequest, RuntimeBridgeCancelResponse,
-    RuntimeBridgeErrorEnvelope, RuntimeBridgeEventsResponse, RuntimeBridgeHealthResponse,
-    RuntimeBridgeSubmitResponse,
+    BridgeResponseError, ExecutionRequest, RuntimeBridgeCancelResponse, RuntimeBridgeErrorEnvelope,
+    RuntimeBridgeEventsResponse, RuntimeBridgeHealthResponse, RuntimeBridgeSubmitResponse,
 };
 
 #[derive(Debug, Deserialize)]
@@ -22,8 +21,8 @@ pub struct RuntimeBridgeEventsQuery {
 }
 
 fn error_response(error: BridgeResponseError) -> (StatusCode, Json<RuntimeBridgeErrorEnvelope>) {
-    let status = StatusCode::from_u16(error.http_status())
-        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let status =
+        StatusCode::from_u16(error.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     (status, Json(error.to_envelope()))
 }
 

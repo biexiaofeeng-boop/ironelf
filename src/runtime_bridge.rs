@@ -366,7 +366,10 @@ impl RuntimeBridgeManager {
         job_manager_available: bool,
     ) -> RuntimeBridgeHealthResponse {
         let records = self.records.read().await;
-        let active_executions = records.values().filter(|record| !record.status.is_terminal()).count();
+        let active_executions = records
+            .values()
+            .filter(|record| !record.status.is_terminal())
+            .count();
         let ok = store_available && job_manager_available;
 
         RuntimeBridgeHealthResponse {
@@ -419,15 +422,15 @@ impl RuntimeBridgeManager {
                     "Execution ID already belongs to another user",
                 ));
             }
-            if existing.request.trace_id != request.trace_id || existing.request.task_id != request.task_id {
-                return Err(
-                    BridgeResponseError::new(
-                        409,
-                        "runtime_execution_conflict",
-                        "Execution ID already exists with different trace or task identifiers",
-                    )
-                    .with_execution_id(request.execution_id),
-                );
+            if existing.request.trace_id != request.trace_id
+                || existing.request.task_id != request.task_id
+            {
+                return Err(BridgeResponseError::new(
+                    409,
+                    "runtime_execution_conflict",
+                    "Execution ID already exists with different trace or task identifiers",
+                )
+                .with_execution_id(request.execution_id));
             }
             return Ok(RuntimeBridgeSubmitResponse {
                 schema_version: default_schema_version(),
@@ -438,11 +441,20 @@ impl RuntimeBridgeManager {
             });
         }
 
-        if let Some(decision) = self.preflight_decision(&request, store.is_some(), job_manager.is_some()).await {
+        if let Some(decision) = self
+            .preflight_decision(&request, store.is_some(), job_manager.is_some())
+            .await
+        {
             let summary = decision.message.clone();
             let execution_id = request.execution_id.clone();
-            self.insert_terminal_record(request.clone(), user_id, timeout_s, decision, summary.clone())
-                .await;
+            self.insert_terminal_record(
+                request.clone(),
+                user_id,
+                timeout_s,
+                decision,
+                summary.clone(),
+            )
+            .await;
             let status = self
                 .records
                 .read()
@@ -496,17 +508,14 @@ impl RuntimeBridgeManager {
             credential_grants_json: serialize_credential_grants(Vec::<CredentialGrant>::new()),
         };
 
-        store
-            .save_sandbox_job(&sandbox_record)
-            .await
-            .map_err(|e| {
-                BridgeResponseError::new(
-                    500,
-                    "runtime_submit_failed",
-                    format!("Failed to persist sandbox job: {e}"),
-                )
-                .with_execution_id(request.execution_id.clone())
-            })?;
+        store.save_sandbox_job(&sandbox_record).await.map_err(|e| {
+            BridgeResponseError::new(
+                500,
+                "runtime_submit_failed",
+                format!("Failed to persist sandbox job: {e}"),
+            )
+            .with_execution_id(request.execution_id.clone())
+        })?;
 
         if let Err(e) = store.update_sandbox_job_mode(job_id, mode.as_str()).await {
             tracing::warn!(job_id = %job_id, error = %e, "Failed to persist runtime bridge job mode");
@@ -570,14 +579,12 @@ impl RuntimeBridgeManager {
             )
             .await?;
 
-            return Err(
-                BridgeResponseError::new(
-                    500,
-                    "runtime_submit_failed",
-                    "Runtime bridge failed to launch execution",
-                )
-                .with_execution_id(request.execution_id),
-            );
+            return Err(BridgeResponseError::new(
+                500,
+                "runtime_submit_failed",
+                "Runtime bridge failed to launch execution",
+            )
+            .with_execution_id(request.execution_id));
         }
 
         store
@@ -712,35 +719,29 @@ impl RuntimeBridgeManager {
         }
 
         let Some(store) = store else {
-            return Err(
-                BridgeResponseError::new(
-                    503,
-                    "runtime_store_unavailable",
-                    "Runtime bridge store is not available for cancellation",
-                )
-                .with_execution_id(execution_id.to_string()),
-            );
+            return Err(BridgeResponseError::new(
+                503,
+                "runtime_store_unavailable",
+                "Runtime bridge store is not available for cancellation",
+            )
+            .with_execution_id(execution_id.to_string()));
         };
         let Some(job_manager) = job_manager else {
-            return Err(
-                BridgeResponseError::new(
-                    503,
-                    "runtime_job_manager_unavailable",
-                    "Runtime bridge job manager is not available for cancellation",
-                )
-                .with_execution_id(execution_id.to_string()),
-            );
+            return Err(BridgeResponseError::new(
+                503,
+                "runtime_job_manager_unavailable",
+                "Runtime bridge job manager is not available for cancellation",
+            )
+            .with_execution_id(execution_id.to_string()));
         };
 
         let Some(job_id) = record.job_id else {
-            return Err(
-                BridgeResponseError::new(
-                    409,
-                    "runtime_cancel_unavailable",
-                    "Execution has no bound runtime job",
-                )
-                .with_execution_id(execution_id.to_string()),
-            );
+            return Err(BridgeResponseError::new(
+                409,
+                "runtime_cancel_unavailable",
+                "Execution has no bound runtime job",
+            )
+            .with_execution_id(execution_id.to_string()));
         };
 
         if let Err(e) = job_manager.stop_job(job_id).await {
@@ -923,24 +924,20 @@ impl RuntimeBridgeManager {
     ) -> Result<(), BridgeResponseError> {
         let records = self.records.read().await;
         let Some(record) = records.get(execution_id) else {
-            return Err(
-                BridgeResponseError::new(
-                    404,
-                    "runtime_execution_unknown",
-                    "Execution ID is not known to the runtime bridge",
-                )
-                .with_execution_id(execution_id.to_string()),
-            );
+            return Err(BridgeResponseError::new(
+                404,
+                "runtime_execution_unknown",
+                "Execution ID is not known to the runtime bridge",
+            )
+            .with_execution_id(execution_id.to_string()));
         };
         if record.user_id != user_id {
-            return Err(
-                BridgeResponseError::new(
-                    404,
-                    "runtime_execution_unknown",
-                    "Execution ID is not known to the runtime bridge",
-                )
-                .with_execution_id(execution_id.to_string()),
-            );
+            return Err(BridgeResponseError::new(
+                404,
+                "runtime_execution_unknown",
+                "Execution ID is not known to the runtime bridge",
+            )
+            .with_execution_id(execution_id.to_string()));
         }
         Ok(())
     }
@@ -1018,7 +1015,10 @@ impl RuntimeBridgeManager {
                     .unwrap_or(DEFAULT_TIMEOUT_S)
             };
             tokio::time::sleep(Duration::from_secs(timeout_s)).await;
-            if let Err(e) = manager.timeout_execution(&execution_id, store, job_manager).await {
+            if let Err(e) = manager
+                .timeout_execution(&execution_id, store, job_manager)
+                .await
+            {
                 tracing::debug!(execution_id, error = %e.message, "Runtime bridge timeout watcher exited without transition");
             }
         });
@@ -1149,7 +1149,11 @@ impl RuntimeBridgeManager {
                     }
                 });
                 if let Some(store) = store.as_ref() {
-                    let db_status = if result.success { "completed" } else { "failed" };
+                    let db_status = if result.success {
+                        "completed"
+                    } else {
+                        "failed"
+                    };
                     let db_message = summary.clone();
                     if let Err(e) = store
                         .update_sandbox_job_status(
@@ -1180,8 +1184,12 @@ impl RuntimeBridgeManager {
                 return Ok(());
             }
 
-            if matches!(handle.state, ContainerState::Stopped | ContainerState::Failed) {
-                let summary = "Runtime container stopped before reporting a final receipt".to_string();
+            if matches!(
+                handle.state,
+                ContainerState::Stopped | ContainerState::Failed
+            ) {
+                let summary =
+                    "Runtime container stopped before reporting a final receipt".to_string();
                 if let Some(store) = store.as_ref()
                     && let Err(e) = store
                         .update_sandbox_job_status(
@@ -1234,18 +1242,19 @@ impl RuntimeBridgeManager {
             };
 
             if let Some(status) = terminal {
-                let summary = sandbox_job.failure_reason.clone().unwrap_or_else(|| match status {
-                    BridgeExecutionStatus::Succeeded => {
-                        "Execution completed successfully".to_string()
-                    }
-                    BridgeExecutionStatus::Cancelled => {
-                        "Execution was cancelled".to_string()
-                    }
-                    BridgeExecutionStatus::TimedOut => {
-                        format!("Execution timed out after {}s", record.timeout_s)
-                    }
-                    _ => "Execution ended with a runtime failure".to_string(),
-                });
+                let summary = sandbox_job
+                    .failure_reason
+                    .clone()
+                    .unwrap_or_else(|| match status {
+                        BridgeExecutionStatus::Succeeded => {
+                            "Execution completed successfully".to_string()
+                        }
+                        BridgeExecutionStatus::Cancelled => "Execution was cancelled".to_string(),
+                        BridgeExecutionStatus::TimedOut => {
+                            format!("Execution timed out after {}s", record.timeout_s)
+                        }
+                        _ => "Execution ended with a runtime failure".to_string(),
+                    });
                 let event_type = match status {
                     BridgeExecutionStatus::Cancelled => "cancel",
                     BridgeExecutionStatus::TimedOut => "timeout",
@@ -1269,7 +1278,9 @@ impl RuntimeBridgeManager {
                     .iter()
                     .rev()
                     .find(|event| event.event.event_type == "status")
-                    .map(|event| event.event.status == BridgeExecutionStatus::WaitingApproval.as_str())
+                    .map(|event| {
+                        event.event.status == BridgeExecutionStatus::WaitingApproval.as_str()
+                    })
                     .unwrap_or(false);
 
                 let mut records = self.records.write().await;
@@ -1387,7 +1398,9 @@ fn validate_request(request: &ExecutionRequest) -> Result<(), BridgeResponseErro
 }
 
 fn normalize_timeout(timeout_s: Option<u64>) -> u64 {
-    timeout_s.unwrap_or(DEFAULT_TIMEOUT_S).clamp(1, MAX_TIMEOUT_S)
+    timeout_s
+        .unwrap_or(DEFAULT_TIMEOUT_S)
+        .clamp(1, MAX_TIMEOUT_S)
 }
 
 fn select_job_mode(tool_hints: &[String]) -> JobMode {
@@ -1452,11 +1465,18 @@ fn build_job_task(request: &ExecutionRequest) -> String {
 
 fn create_project_dir(job_id: Uuid) -> Result<PathBuf, String> {
     let base = ironclaw_base_dir().join("projects");
-    std::fs::create_dir_all(&base)
-        .map_err(|e| format!("failed to create runtime projects base {}: {e}", base.display()))?;
-    let canonical_base = base
-        .canonicalize()
-        .map_err(|e| format!("failed to canonicalize runtime projects base {}: {e}", base.display()))?;
+    std::fs::create_dir_all(&base).map_err(|e| {
+        format!(
+            "failed to create runtime projects base {}: {e}",
+            base.display()
+        )
+    })?;
+    let canonical_base = base.canonicalize().map_err(|e| {
+        format!(
+            "failed to canonicalize runtime projects base {}: {e}",
+            base.display()
+        )
+    })?;
     let project_dir = canonical_base.join(job_id.to_string());
     std::fs::create_dir_all(&project_dir).map_err(|e| {
         format!(
@@ -1571,18 +1591,33 @@ fn build_receipt(record: &ExecutionRecord, merged_events: &[MergedEvent]) -> Exe
         kinds.insert(classify_evidence_kind(&event.event).to_string());
     }
 
-    let summary = record.terminal_summary.clone().unwrap_or_else(|| match record.status {
-        BridgeExecutionStatus::Succeeded => "Execution completed successfully".to_string(),
-        BridgeExecutionStatus::Cancelled => "Execution was cancelled".to_string(),
-        BridgeExecutionStatus::TimedOut => format!("Execution timed out after {}s", record.timeout_s),
-        BridgeExecutionStatus::Blocked => "Execution was blocked by runtime admission checks".to_string(),
-        BridgeExecutionStatus::Degraded => "Runtime bridge is degraded and could not execute the request".to_string(),
-        BridgeExecutionStatus::NotImplemented => "Requested runtime capability is not implemented".to_string(),
-        BridgeExecutionStatus::Failed => "Execution failed inside the runtime plane".to_string(),
-        BridgeExecutionStatus::Accepted => "Execution has been accepted".to_string(),
-        BridgeExecutionStatus::Running => "Execution is still running".to_string(),
-        BridgeExecutionStatus::WaitingApproval => "Execution is waiting for approval".to_string(),
-    });
+    let summary = record
+        .terminal_summary
+        .clone()
+        .unwrap_or_else(|| match record.status {
+            BridgeExecutionStatus::Succeeded => "Execution completed successfully".to_string(),
+            BridgeExecutionStatus::Cancelled => "Execution was cancelled".to_string(),
+            BridgeExecutionStatus::TimedOut => {
+                format!("Execution timed out after {}s", record.timeout_s)
+            }
+            BridgeExecutionStatus::Blocked => {
+                "Execution was blocked by runtime admission checks".to_string()
+            }
+            BridgeExecutionStatus::Degraded => {
+                "Runtime bridge is degraded and could not execute the request".to_string()
+            }
+            BridgeExecutionStatus::NotImplemented => {
+                "Requested runtime capability is not implemented".to_string()
+            }
+            BridgeExecutionStatus::Failed => {
+                "Execution failed inside the runtime plane".to_string()
+            }
+            BridgeExecutionStatus::Accepted => "Execution has been accepted".to_string(),
+            BridgeExecutionStatus::Running => "Execution is still running".to_string(),
+            BridgeExecutionStatus::WaitingApproval => {
+                "Execution is waiting for approval".to_string()
+            }
+        });
 
     ExecutionReceipt {
         schema_version: default_schema_version(),
@@ -1680,7 +1715,13 @@ mod tests {
             .unwrap_or_else(|e| panic!("poll unexpectedly failed: {}", e.message));
 
         assert!(events.done);
-        assert_eq!(events.receipt.as_ref().map(|receipt| receipt.execution_state.as_str()), Some("blocked"));
+        assert_eq!(
+            events
+                .receipt
+                .as_ref()
+                .map(|receipt| receipt.execution_state.as_str()),
+            Some("blocked")
+        );
     }
 
     #[tokio::test]
@@ -1760,13 +1801,28 @@ mod tests {
 
         assert!(response.done);
         assert!(response.next_cursor >= 3);
-        assert_eq!(response.events.first().map(|event| event.event_type.as_str()), Some("tool_started"));
-        assert_eq!(response.receipt.as_ref().map(|receipt| receipt.terminal_state.as_str()), Some("DONE"));
+        assert_eq!(
+            response
+                .events
+                .first()
+                .map(|event| event.event_type.as_str()),
+            Some("tool_started")
+        );
+        assert_eq!(
+            response
+                .receipt
+                .as_ref()
+                .map(|receipt| receipt.terminal_state.as_str()),
+            Some("DONE")
+        );
         assert!(
             response
                 .receipt
                 .as_ref()
-                .map(|receipt| receipt.evidence_digest.kinds.contains(&"response".to_string()))
+                .map(|receipt| receipt
+                    .evidence_digest
+                    .kinds
+                    .contains(&"response".to_string()))
                 .unwrap_or(false)
         );
     }
@@ -1810,6 +1866,12 @@ mod tests {
             .await
             .unwrap_or_else(|e| panic!("poll unexpectedly failed: {}", e.message));
         assert!(response.done);
-        assert_eq!(response.receipt.as_ref().map(|receipt| receipt.execution_state.as_str()), Some("timed_out"));
+        assert_eq!(
+            response
+                .receipt
+                .as_ref()
+                .map(|receipt| receipt.execution_state.as_str()),
+            Some("timed_out")
+        );
     }
 }

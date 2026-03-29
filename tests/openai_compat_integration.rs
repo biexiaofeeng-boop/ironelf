@@ -12,12 +12,12 @@ use rust_decimal::Decimal;
 use ironclaw::channels::web::server::{GatewayState, start_server};
 use ironclaw::channels::web::sse::SseManager;
 use ironclaw::channels::web::ws::WsConnectionTracker;
-use ironclaw::runtime_bridge::RuntimeBridgeManager;
 use ironclaw::error::LlmError;
 use ironclaw::llm::{
     CompletionRequest, CompletionResponse, FinishReason, LlmProvider, ToolCompletionRequest,
     ToolCompletionResponse,
 };
+use ironclaw::runtime_bridge::RuntimeBridgeManager;
 
 const AUTH_TOKEN: &str = "test-openai-token";
 

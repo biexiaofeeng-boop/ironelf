@@ -27,9 +27,9 @@ use ironclaw::llm::registry::ProviderProtocol;
 use ironclaw::llm::{
     SessionConfig as LlmSessionConfig, SessionManager as LlmSessionManager, create_llm_provider,
 };
+use ironclaw::runtime_bridge::RuntimeBridgeManager;
 use ironclaw::secrets::SecretsStore;
 use ironclaw::tools::{Tool, ToolError, ToolOutput};
-use ironclaw::runtime_bridge::RuntimeBridgeManager;
 
 use crate::support::test_channel::{TestChannel, TestChannelHandle};
 
