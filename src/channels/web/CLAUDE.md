@@ -61,6 +61,14 @@ Browser-facing HTTP API and SSE/WebSocket real-time streaming. Axum-based, singl
 | GET | `/api/jobs/{id}/files/list` | List files in job workspace |
 | GET | `/api/jobs/{id}/files/read` | Read a file from job workspace |
 
+### Runtime Bridge
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/runtime/health` | Runtime bridge readiness + capability summary |
+| POST | `/api/runtime/submit` | Submit a structured execution request |
+| GET | `/api/runtime/executions/{execution_id}/events` | Poll structured runtime events with a cursor |
+| POST | `/api/runtime/executions/{execution_id}/cancel` | Cancel a runtime execution and return a receipt |
+
 ### Skills
 | Method | Path | Description |
 |--------|------|-------------|

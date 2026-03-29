@@ -23,6 +23,7 @@ use crate::channels::web::server::{
     ActiveConfigSnapshot, GatewayState, PerUserRateLimiter, PromptQueue, RateLimiter, WorkspacePool,
 };
 use crate::channels::web::sse::SseManager;
+use crate::runtime_bridge::RuntimeBridgeManager;
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -65,6 +66,7 @@ fn build_state(
         tool_registry: None,
         store,
         job_manager: None,
+        runtime_bridge: Arc::new(RuntimeBridgeManager::default()),
         prompt_queue,
         owner_id: "test".to_string(),
         shutdown_tx: tokio::sync::RwLock::new(None),

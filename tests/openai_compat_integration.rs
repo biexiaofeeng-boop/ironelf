@@ -12,6 +12,7 @@ use rust_decimal::Decimal;
 use ironclaw::channels::web::server::{GatewayState, start_server};
 use ironclaw::channels::web::sse::SseManager;
 use ironclaw::channels::web::ws::WsConnectionTracker;
+use ironclaw::runtime_bridge::RuntimeBridgeManager;
 use ironclaw::error::LlmError;
 use ironclaw::llm::{
     CompletionRequest, CompletionResponse, FinishReason, LlmProvider, ToolCompletionRequest,
@@ -202,6 +203,7 @@ async fn start_test_server_with_provider(
         tool_registry: None,
         store: None,
         job_manager: None,
+        runtime_bridge: Arc::new(RuntimeBridgeManager::default()),
         prompt_queue: None,
         scheduler: None,
         owner_id: "test-user".to_string(),
@@ -702,6 +704,7 @@ async fn test_no_llm_provider_returns_503() {
         tool_registry: None,
         store: None,
         job_manager: None,
+        runtime_bridge: Arc::new(RuntimeBridgeManager::default()),
         prompt_queue: None,
         scheduler: None,
         owner_id: "test-user".to_string(),

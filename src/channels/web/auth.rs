@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::num::NonZeroUsize;
 
 use axum::{
+    Json,
     extract::{FromRequestParts, Request, State},
     http::{HeaderMap, Method, StatusCode, request::Parts},
     middleware::Next,
@@ -20,6 +21,7 @@ use subtle::ConstantTimeEq;
 use tokio::sync::RwLock;
 
 use crate::db::Database;
+use crate::runtime_bridge::{RuntimeBridgeErrorDetail, RuntimeBridgeErrorEnvelope};
 
 /// Identity resolved from a bearer token.
 #[derive(Debug, Clone)]
@@ -343,6 +345,8 @@ pub async fn auth_middleware(
     mut request: Request,
     next: Next,
 ) -> Response {
+    let is_runtime_bridge_route = request.uri().path().starts_with("/api/runtime/");
+
     // Extract the candidate token from header or query param.
     let token = extract_token(&headers, &request);
 
@@ -361,15 +365,45 @@ pub async fn auth_middleware(
                     return next.run(request).await;
                 }
                 Err(()) => {
-                    return (StatusCode::SERVICE_UNAVAILABLE, "Database unavailable")
-                        .into_response();
+                    return if is_runtime_bridge_route {
+                        runtime_bridge_auth_error(
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "runtime_auth_unavailable",
+                            "Database unavailable during runtime bridge authentication",
+                        )
+                    } else {
+                        (StatusCode::SERVICE_UNAVAILABLE, "Database unavailable").into_response()
+                    };
                 }
                 Ok(None) => {}
             }
         }
     }
 
-    (StatusCode::UNAUTHORIZED, "Invalid or missing auth token").into_response()
+    if is_runtime_bridge_route {
+        runtime_bridge_auth_error(
+            StatusCode::UNAUTHORIZED,
+            "runtime_auth_invalid",
+            "Invalid or missing auth token",
+        )
+    } else {
+        (StatusCode::UNAUTHORIZED, "Invalid or missing auth token").into_response()
+    }
+}
+
+fn runtime_bridge_auth_error(status: StatusCode, code: &str, message: &str) -> Response {
+    (
+        status,
+        Json(RuntimeBridgeErrorEnvelope {
+            schema_version: "v1".to_string(),
+            error: RuntimeBridgeErrorDetail {
+                code: code.to_string(),
+                message: message.to_string(),
+            },
+            execution_id: None,
+        }),
+    )
+        .into_response()
 }
 
 /// Extract a bearer token from the Authorization header or query parameter.
@@ -476,6 +510,7 @@ mod tests {
             .route("/api/chat/ws", get(dummy_handler))
             .route("/api/chat/history", get(dummy_handler))
             .route("/api/chat/send", post(dummy_handler))
+            .route("/api/runtime/health", get(dummy_handler))
             .layer(middleware::from_fn_with_state(state, auth_middleware))
     }
 
@@ -501,6 +536,22 @@ mod tests {
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_runtime_bridge_invalid_token_returns_json_error() {
+        let app = test_app(TEST_AUTH_SECRET_TOKEN);
+        let req = Request::builder()
+            .uri("/api/runtime/health")
+            .header("Authorization", "Bearer wrong-token")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["schema_version"], "v1");
+        assert_eq!(payload["error"]["code"], "runtime_auth_invalid");
     }
 
     #[tokio::test]

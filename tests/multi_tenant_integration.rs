@@ -29,6 +29,7 @@ use ironclaw::channels::web::server::{
 use ironclaw::channels::web::sse::SseManager;
 use ironclaw::channels::web::test_helpers::TestGatewayBuilder;
 use ironclaw::channels::web::ws::WsConnectionTracker;
+use ironclaw::runtime_bridge::RuntimeBridgeManager;
 use ironclaw::context::JobContext;
 use ironclaw::db::Database;
 
@@ -544,6 +545,7 @@ fn gateway_state_has_multi_tenant_fields() {
         tool_registry: None,
         store: None,
         job_manager: None,
+        runtime_bridge: Arc::new(RuntimeBridgeManager::default()),
         prompt_queue: None,
         scheduler: None,
         owner_id: "fallback".to_string(),
@@ -620,6 +622,7 @@ async fn start_owner_scoped_sender_server() -> (
         tool_registry: None,
         store: None,
         job_manager: None,
+        runtime_bridge: Arc::new(RuntimeBridgeManager::default()),
         prompt_queue: None,
         scheduler: None,
         owner_id: OWNER_SCOPE_ID.to_string(),
@@ -1006,6 +1009,7 @@ async fn start_multi_user_server_with_db() -> (
         tool_registry: None,
         store: Some(Arc::clone(&db)),
         job_manager: None,
+        runtime_bridge: Arc::new(RuntimeBridgeManager::default()),
         prompt_queue: None,
         scheduler: None,
         owner_id: ALICE_USER_ID.to_string(),
