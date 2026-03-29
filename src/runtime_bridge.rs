@@ -1182,8 +1182,8 @@ impl RuntimeBridgeManager {
 
             if matches!(handle.state, ContainerState::Stopped | ContainerState::Failed) {
                 let summary = "Runtime container stopped before reporting a final receipt".to_string();
-                if let Some(store) = store.as_ref() {
-                    if let Err(e) = store
+                if let Some(store) = store.as_ref()
+                    && let Err(e) = store
                         .update_sandbox_job_status(
                             job_id,
                             "failed",
@@ -1193,9 +1193,8 @@ impl RuntimeBridgeManager {
                             Some(Utc::now()),
                         )
                         .await
-                    {
-                        tracing::warn!(job_id = %job_id, error = %e, "Runtime bridge failed to persist unexpected stop");
-                    }
+                {
+                    tracing::warn!(job_id = %job_id, error = %e, "Runtime bridge failed to persist unexpected stop");
                 }
                 self.finalize_execution(
                     execution_id,

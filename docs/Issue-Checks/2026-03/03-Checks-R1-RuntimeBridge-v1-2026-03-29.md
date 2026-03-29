@@ -35,19 +35,21 @@
 | Case ID | Result | Evidence |
 |---|---|---|
 | C01 | CODED / STATIC-CHECKED | Bridge routes are isolated under `/api/runtime/*`; existing gateway chat/jobs paths remain unchanged. `git diff --check` passed locally. |
-| C02 | CODED / NOT RUN | `src/runtime_bridge.rs` implements `submit()` and `src/channels/web/handlers/bridge.rs` exposes `POST /api/runtime/submit` with mock-compatible JSON envelopes. |
-| C03 | CODED / NOT RUN | `GET /api/runtime/executions/{execution_id}/events` returns ordered `ExecutionEvent[]`, `next_cursor`, `done`, and optional `receipt`; runtime events are merged from synthetic bridge events + persisted `job_events`. |
+| C02 | CODED / TESTED | `src/runtime_bridge.rs` implements `submit()` and `src/channels/web/handlers/bridge.rs` exposes `POST /api/runtime/submit` with mock-compatible JSON envelopes; verified by `cargo test runtime_bridge --lib` via `submit_blocks_fast_lane_requests_with_mock_compatible_shape`. |
+| C03 | CODED / TESTED | `GET /api/runtime/executions/{execution_id}/events` returns ordered `ExecutionEvent[]`, `next_cursor`, `done`, and optional `receipt`; verified by `poll_events_merges_synthetic_and_runtime_events_with_cursor`. |
 | C04 | CODED / STATIC-CHECKED | Admission rejects or degrades in structured JSON (`blocked`, `degraded`, `not_implemented`) instead of hanging; fast-lane work is blocked from runtime via preflight rather than altering core dialogue paths. |
-| C05 | CODED / UNIT-TEST ADDED / NOT RUN | Timeout watcher and `timeout_execution()` mark terminal `timed_out` state and emit structured timeout events/receipt; covered by `timeout_transitions_running_execution_to_timed_out` in `src/runtime_bridge.rs`. |
-| C06 | CODED / NOT RUN | Cancel path calls `stop_job()`, persists interrupted status, and returns structured cancel receipt via `cancel()` + `POST /api/runtime/executions/{execution_id}/cancel`. |
-| C07 | CODED / NOT RUN | Preflight enforces lane/risk/capability/runtime-readiness checks in `preflight_decision()` and returns structured blocked/degraded/not_implemented responses. |
-| C08 | CODED / NOT RUN | Launch path retries container creation once (`CREATE_JOB_MAX_ATTEMPTS=2`) and emits visible `retry` events before final failure. |
-| C09 | CODED / NOT RUN | `trace_id`, `task_id`, `execution_id` are carried from request into every event and receipt by `ExecutionRecord` + `map_job_event()` / `build_receipt()`. |
-| C10 | CODED / NOT RUN | `ExecutionReceipt.evidence_digest` is synthesized from merged runtime events with `count` and `kinds`. |
-| C11 | CODED / NOT RUN | Event replay reconstructs execution state from synthetic bridge events plus DB-backed `job_events`; `poll_events_merges_synthetic_and_runtime_events_with_cursor` was added as a unit test scaffold. |
+| C05 | CODED / TESTED | Timeout watcher and `timeout_execution()` mark terminal `timed_out` state and emit structured timeout events/receipt; verified by `timeout_transitions_running_execution_to_timed_out`. |
+| C06 | CODED / STATIC-CHECKED | Cancel path calls `stop_job()`, persists interrupted status, and returns structured cancel receipt via `cancel()` + `POST /api/runtime/executions/{execution_id}/cancel`; compile + clippy passed, but no direct cancel integration test yet. |
+| C07 | CODED / TESTED | Preflight enforces lane/risk/capability/runtime-readiness checks in `preflight_decision()` and returns structured blocked/degraded/not_implemented responses; fast-lane rejection verified by `submit_blocks_fast_lane_requests_with_mock_compatible_shape`. |
+| C08 | CODED / STATIC-CHECKED | Launch path retries container creation once (`CREATE_JOB_MAX_ATTEMPTS=2`) and emits visible `retry` events before final failure; compile + clippy passed, but no retry-path test yet. |
+| C09 | CODED / TESTED | `trace_id`, `task_id`, `execution_id` are carried from request into every event and receipt by `ExecutionRecord` + `map_job_event()` / `build_receipt()`; verified by `poll_events_merges_synthetic_and_runtime_events_with_cursor`. |
+| C10 | CODED / TESTED | `ExecutionReceipt.evidence_digest` is synthesized from merged runtime events with `count` and `kinds`; verified by `poll_events_merges_synthetic_and_runtime_events_with_cursor`. |
+| C11 | CODED / TESTED | Event replay reconstructs execution state from synthetic bridge events plus DB-backed `job_events`; verified by `poll_events_merges_synthetic_and_runtime_events_with_cursor`. |
 | C12 | CODED / STATIC-CHECKED | Final `next_action` remains `return_to_chimera_core`; runtime bridge returns only structured machine-facing JSON and does not narrate user-facing prose. |
 
 ## E. Verification Notes
 
 - Static check completed: `git diff --check`
-- Compile / test run blocked in this environment: `cargo` / `rustc` are not installed on the current machine, so `cargo check` and `cargo test` could not be executed here.
+- Compile check completed: `cargo check --tests`
+- Lint check completed: `cargo clippy --tests -- -D warnings`
+- Focused runtime bridge tests completed: `cargo test runtime_bridge --lib`
