@@ -22,7 +22,7 @@ use crate::tools::builtin::{
     MemoryReadTool, MemorySearchTool, MemoryTreeTool, MemoryWriteTool, PromptQueue, ReadFileTool,
     ShellTool, SkillInstallTool, SkillListTool, SkillRemoveTool, SkillSearchTool, TimeTool,
     ToolActivateTool, ToolAuthTool, ToolInstallTool, ToolListTool, ToolRemoveTool, ToolSearchTool,
-    ToolUpgradeTool, WriteFileTool,
+    ToolUpgradeTool, WebFetchTool, WebSearchTool, WriteFileTool,
 };
 use crate::tools::rate_limiter::RateLimiter;
 use crate::tools::tool::{ApprovalRequirement, Tool, ToolDomain};
@@ -73,6 +73,7 @@ const PROTECTED_TOOL_NAMES: &[&str] = &[
     "skill_remove",
     "message",
     "web_fetch",
+    "web_search",
     "restart",
     "image_generate",
     "image_edit",
@@ -330,8 +331,10 @@ impl ToolRegistry {
         self.register_sync(Arc::new(WriteFileTool::new()));
         self.register_sync(Arc::new(ListDirTool::new()));
         self.register_sync(Arc::new(ApplyPatchTool::new()));
+        self.register_sync(Arc::new(WebFetchTool::new()));
+        self.register_sync(Arc::new(WebSearchTool::from_env()));
 
-        tracing::debug!("Registered 5 development tools");
+        tracing::debug!("Registered 7 development tools");
     }
 
     /// Register memory tools with a workspace resolver.

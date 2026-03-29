@@ -1481,12 +1481,10 @@ fn normalize_timeout(timeout_s: Option<u64>) -> u64 {
 }
 
 fn select_job_mode(tool_hints: &[String]) -> JobMode {
-    if tool_hints.iter().any(|hint| {
-        matches!(
-            hint.as_str(),
-            "browser" | "mock_browser" | "web_search" | "web_fetch"
-        )
-    }) {
+    if tool_hints
+        .iter()
+        .any(|hint| matches!(hint.as_str(), "browser" | "mock_browser"))
+    {
         JobMode::ClaudeCode
     } else {
         JobMode::Worker
@@ -2067,6 +2065,23 @@ mod tests {
         assert_eq!(outcome.summary, "Execution failed: tool timed out");
         assert_eq!(outcome.payload["job_id"], json!(job_id.to_string()));
         assert_eq!(outcome.payload["job_mode"], json!("worker"));
+    }
+
+    #[test]
+    fn select_job_mode_routes_native_web_hints_to_worker_and_browser_to_claude() {
+        assert_eq!(select_job_mode(&["web_fetch".to_string()]), JobMode::Worker);
+        assert_eq!(
+            select_job_mode(&["web_search".to_string()]),
+            JobMode::Worker
+        );
+        assert_eq!(
+            select_job_mode(&["browser".to_string()]),
+            JobMode::ClaudeCode
+        );
+        assert_eq!(
+            select_job_mode(&["mock_browser".to_string(), "web_fetch".to_string()]),
+            JobMode::ClaudeCode
+        );
     }
 
     #[tokio::test]
