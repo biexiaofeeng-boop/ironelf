@@ -85,6 +85,31 @@ impl Default for ContainerJobConfig {
     }
 }
 
+const WORKER_ENV_PASSTHROUGH_KEYS: &[&str] = &[
+    "TAVILY_API_KEY",
+    "BRAVE_API_KEY",
+    "IRONCLAW_WEB_SEARCH_PROVIDER",
+    "IRONCLAW_WEB_SEARCH_FALLBACK_PROVIDER",
+    "IRONCLAW_WEB_SEARCH_MAX_RESULTS",
+    "IRONCLAW_WEB_SEARCH_TIMEOUT_SECS",
+    "IRONCLAW_WEB_SEARCH_TAVILY_URL",
+    "IRONCLAW_WEB_SEARCH_BRAVE_URL",
+];
+
+fn trimmed_env_var(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn collect_worker_passthrough_env() -> Vec<String> {
+    WORKER_ENV_PASSTHROUGH_KEYS
+        .iter()
+        .filter_map(|name| trimmed_env_var(name).map(|value| format!("{name}={value}")))
+        .collect()
+}
+
 /// State of a container.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContainerState {
@@ -337,6 +362,10 @@ impl ContainerJobManager {
 
         if let Some(execution_id) = execution_id.as_ref() {
             env_vec.push(format!("IRONCLAW_EXECUTION_ID={execution_id}"));
+        }
+
+        if mode == JobMode::Worker {
+            env_vec.extend(collect_worker_passthrough_env());
         }
 
         // Build volume mounts (validate project_dir stays within ~/.ironclaw/projects/)
@@ -663,6 +692,50 @@ mod tests {
         let config = ContainerJobConfig::default();
         assert_eq!(config.orchestrator_port, 50051);
         assert_eq!(config.memory_limit_mb, 2048);
+    }
+
+    #[test]
+    fn test_collect_worker_passthrough_env_includes_trimmed_web_search_settings() {
+        let original_tavily = std::env::var("TAVILY_API_KEY").ok();
+        let original_provider = std::env::var("IRONCLAW_WEB_SEARCH_PROVIDER").ok();
+        let original_timeout = std::env::var("IRONCLAW_WEB_SEARCH_TIMEOUT_SECS").ok();
+        let original_brave = std::env::var("BRAVE_API_KEY").ok();
+
+        unsafe {
+            std::env::set_var("TAVILY_API_KEY", "  tavily-test-key  ");
+            std::env::set_var("IRONCLAW_WEB_SEARCH_PROVIDER", " tavily ");
+            std::env::set_var("IRONCLAW_WEB_SEARCH_TIMEOUT_SECS", " 15 ");
+            std::env::set_var("BRAVE_API_KEY", "   ");
+        }
+
+        let env = collect_worker_passthrough_env();
+
+        assert!(env.contains(&"TAVILY_API_KEY=tavily-test-key".to_string()));
+        assert!(env.contains(&"IRONCLAW_WEB_SEARCH_PROVIDER=tavily".to_string()));
+        assert!(env.contains(&"IRONCLAW_WEB_SEARCH_TIMEOUT_SECS=15".to_string()));
+        assert!(
+            !env.iter().any(|entry| entry.starts_with("BRAVE_API_KEY=")),
+            "blank provider keys should not be passed through"
+        );
+
+        unsafe {
+            match original_tavily {
+                Some(value) => std::env::set_var("TAVILY_API_KEY", value),
+                None => std::env::remove_var("TAVILY_API_KEY"),
+            }
+            match original_provider {
+                Some(value) => std::env::set_var("IRONCLAW_WEB_SEARCH_PROVIDER", value),
+                None => std::env::remove_var("IRONCLAW_WEB_SEARCH_PROVIDER"),
+            }
+            match original_timeout {
+                Some(value) => std::env::set_var("IRONCLAW_WEB_SEARCH_TIMEOUT_SECS", value),
+                None => std::env::remove_var("IRONCLAW_WEB_SEARCH_TIMEOUT_SECS"),
+            }
+            match original_brave {
+                Some(value) => std::env::set_var("BRAVE_API_KEY", value),
+                None => std::env::remove_var("BRAVE_API_KEY"),
+            }
+        }
     }
 
     #[test]

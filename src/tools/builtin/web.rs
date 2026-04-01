@@ -163,6 +163,40 @@ impl WebSearchConfig {
                 .unwrap_or_else(|_| "https://api.search.brave.com/res/v1/web/search".to_string()),
         }
     }
+
+    fn resolve_for_context(&self, ctx: &JobContext) -> Self {
+        let provider = context_env_trimmed(ctx, "IRONCLAW_WEB_SEARCH_PROVIDER")
+            .as_deref()
+            .and_then(|value| parse_provider_preference_env(Some(value)))
+            .unwrap_or(self.provider);
+        let fallback_provider = context_env_trimmed(ctx, "IRONCLAW_WEB_SEARCH_FALLBACK_PROVIDER")
+            .as_deref()
+            .map(|value| parse_optional_provider_env(Some(value)))
+            .unwrap_or(self.fallback_provider);
+        let max_results = context_env_trimmed(ctx, "IRONCLAW_WEB_SEARCH_MAX_RESULTS")
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(self.max_results)
+            .clamp(1, MAX_SEARCH_RESULTS);
+        let timeout_secs = context_env_trimmed(ctx, "IRONCLAW_WEB_SEARCH_TIMEOUT_SECS")
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .unwrap_or(self.timeout.as_secs())
+            .clamp(1, MAX_FETCH_TIMEOUT_SECS);
+
+        Self {
+            provider,
+            fallback_provider,
+            max_results,
+            timeout: Duration::from_secs(timeout_secs),
+            tavily_api_key: context_env_trimmed(ctx, "TAVILY_API_KEY")
+                .or_else(|| self.tavily_api_key.clone()),
+            brave_api_key: context_env_trimmed(ctx, "BRAVE_API_KEY")
+                .or_else(|| self.brave_api_key.clone()),
+            tavily_url: context_env_trimmed(ctx, "IRONCLAW_WEB_SEARCH_TAVILY_URL")
+                .unwrap_or_else(|| self.tavily_url.clone()),
+            brave_url: context_env_trimmed(ctx, "IRONCLAW_WEB_SEARCH_BRAVE_URL")
+                .unwrap_or_else(|| self.brave_url.clone()),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -335,24 +369,17 @@ impl Tool for WebSearchTool {
             ));
         }
 
-        let count = parse_result_count(&params, self.config.max_results)?;
-        let provider = parse_provider_preference_value(params.get("provider"))?
-            .unwrap_or(self.config.provider);
+        let config = self.config.resolve_for_context(ctx);
+        let count = parse_result_count(&params, config.max_results)?;
+        let provider =
+            parse_provider_preference_value(params.get("provider"))?.unwrap_or(config.provider);
         let fallback_provider = if params.get("fallback_provider").is_some() {
             parse_fallback_provider_value(params.get("fallback_provider"))?
         } else {
-            self.config.fallback_provider
+            config.fallback_provider
         };
 
-        let result = search_web(
-            &self.config,
-            &query,
-            count,
-            provider,
-            fallback_provider,
-            ctx,
-        )
-        .await;
+        let result = search_web(&config, &query, count, provider, fallback_provider, ctx).await;
 
         Ok(ToolOutput::success(result, start.elapsed()))
     }
@@ -1373,6 +1400,13 @@ fn env_var_trimmed(name: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn context_env_trimmed(ctx: &JobContext, name: &str) -> Option<String> {
+    ctx.extra_env
+        .get(name)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 fn collect_headers(headers: &reqwest::header::HeaderMap) -> HashMap<String, String> {
     headers
         .iter()
@@ -1555,5 +1589,73 @@ mod tests {
         assert_eq!(output.result["ok"], json!(false));
         assert_eq!(output.result["status"], json!("blocked"));
         assert_eq!(output.result["error"]["kind"], json!("auth_missing"));
+    }
+
+    #[tokio::test]
+    async fn web_search_uses_tavily_key_from_job_context_extra_env() {
+        let tool = WebSearchTool::with_config(WebSearchConfig {
+            provider: SearchProviderPreference::Provider(SearchProvider::Tavily),
+            fallback_provider: None,
+            max_results: 5,
+            timeout: Duration::from_secs(DEFAULT_SEARCH_TIMEOUT_SECS),
+            tavily_api_key: None,
+            brave_api_key: None,
+            tavily_url: "https://api.tavily.com/search".to_string(),
+            brave_url: "https://api.search.brave.com/res/v1/web/search".to_string(),
+        });
+        let mut extra_env = HashMap::new();
+        extra_env.insert("TAVILY_API_KEY".to_string(), "ctx-tavily-key".to_string());
+        let ctx = JobContext {
+            extra_env: Arc::new(extra_env),
+            http_interceptor: Some(Arc::new(ReplayingHttpInterceptor::new(vec![
+                HttpExchange {
+                    request: HttpExchangeRequest {
+                        method: "POST".to_string(),
+                        url: "https://api.tavily.com/search".to_string(),
+                        headers: vec![(
+                            reqwest::header::CONTENT_TYPE.to_string(),
+                            "application/json".to_string(),
+                        )],
+                        body: Some(
+                            json!({
+                                "api_key": "ctx-tavily-key",
+                                "query": "rust",
+                                "search_depth": "basic",
+                                "max_results": 2,
+                                "include_answer": false
+                            })
+                            .to_string(),
+                        ),
+                    },
+                    response: HttpExchangeResponse {
+                        status: 200,
+                        headers: vec![("content-type".to_string(), "application/json".to_string())],
+                        body: json!({
+                            "results": [
+                                {
+                                    "title": "Rust",
+                                    "url": "https://www.rust-lang.org/",
+                                    "content": "Rust makes systems programming fast and reliable."
+                                }
+                            ]
+                        })
+                        .to_string(),
+                    },
+                },
+            ]))),
+            ..Default::default()
+        };
+
+        let output = tool
+            .execute(json!({"query": "rust", "count": 2}), &ctx)
+            .await
+            .unwrap_or_else(|error| {
+                panic!("web_search should use Tavily key from JobContext.extra_env, got: {error}")
+            });
+
+        assert_eq!(output.result["ok"], json!(true));
+        assert_eq!(output.result["status"], json!("ok"));
+        assert_eq!(output.result["provider_used"], json!("tavily"));
+        assert_eq!(output.result["fallback_used"], json!(false));
     }
 }

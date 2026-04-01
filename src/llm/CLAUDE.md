@@ -119,7 +119,7 @@ The circuit breaker wraps the entire provider chain. When open, it immediately r
 
 **Cooldown defaults:** `failure_threshold = 3` consecutive retryable failures → cooldown for `cooldown_duration = 300s`. Configure via `NearAiConfig` fields: `failover_cooldown_secs`, `failover_cooldown_threshold`.
 
-**Current wiring:** The failover is set up between primary model and `NEARAI_FALLBACK_MODEL` (a different model name on the same NEAR AI backend), not across different LLM provider types. Cross-provider failover (e.g., NEAR AI → Anthropic) requires manual construction.
+**Current wiring:** The failover is set up between primary model and a same-backend fallback model (`LLM_FALLBACK_MODEL` generically, or `NEARAI_FALLBACK_MODEL` for legacy NearAI config). It does not automatically switch across different LLM provider types. Cross-provider failover (e.g., NEAR AI → Anthropic) still requires manual construction.
 
 ## Retry
 
@@ -200,7 +200,7 @@ Uses the Responses API at `chatgpt.com/backend-api/codex/responses` with ChatGPT
 Raw provider
   → RetryProvider           (per-provider backoff; wraps both primary and fallback)
   → SmartRoutingProvider    (cheap/primary split when NEARAI_CHEAP_MODEL is set)
-  → FailoverProvider        (fallback model; only when NEARAI_FALLBACK_MODEL is set)
+  → FailoverProvider        (fallback model; when LLM_FALLBACK_MODEL or NEARAI_FALLBACK_MODEL is set)
   → CircuitBreakerProvider  (fast-fail; only when NEARAI_CIRCUIT_BREAKER_THRESHOLD is set)
   → CachedProvider          (response cache; only when NEARAI_RESPONSE_CACHE_ENABLED=true)
   → RecordingLlm            (trace capture; only when IRONCLAW_RECORD_TRACE is set)

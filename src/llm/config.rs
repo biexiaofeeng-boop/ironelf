@@ -177,6 +177,11 @@ pub struct LlmConfig {
     /// Works with any backend. Set via `LLM_CHEAP_MODEL` env var.
     /// When set, takes priority over the NearAI-specific `NEARAI_CHEAP_MODEL`.
     pub cheap_model: Option<String>,
+    /// Generic fallback model for failover.
+    /// Works with any backend that supports model override on the same provider family.
+    /// Set via `LLM_FALLBACK_MODEL` env var.
+    /// When set, takes priority over the NearAI-specific `NEARAI_FALLBACK_MODEL`.
+    pub fallback_model: Option<String>,
     /// Enable cascade mode for smart routing (retry with primary if cheap model
     /// response seems uncertain). Default: true. Set via `SMART_ROUTING_CASCADE`.
     pub smart_routing_cascade: bool,
@@ -192,6 +197,21 @@ impl LlmConfig {
         self.cheap_model.as_deref().or_else(|| {
             if self.backend == "nearai" {
                 self.nearai.cheap_model.as_deref()
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Resolve the effective fallback model name.
+    ///
+    /// Resolution order:
+    /// 1. `LLM_FALLBACK_MODEL` (generic, works with any backend)
+    /// 2. `NEARAI_FALLBACK_MODEL` (NearAI-only, backward compatibility)
+    pub fn fallback_model_name(&self) -> Option<&str> {
+        self.fallback_model.as_deref().or_else(|| {
+            if self.backend == "nearai" {
+                self.nearai.fallback_model.as_deref()
             } else {
                 None
             }

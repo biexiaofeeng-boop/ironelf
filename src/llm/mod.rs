@@ -178,9 +178,11 @@ fn create_registry_provider(
     }
 
     match config.protocol {
-        ProviderProtocol::OpenAiCompletions => create_openai_compat_from_registry(config),
-        ProviderProtocol::Anthropic => create_anthropic_from_registry(config),
-        ProviderProtocol::Ollama => create_ollama_from_registry(config),
+        ProviderProtocol::OpenAiCompletions => {
+            create_openai_compat_from_registry(config, request_timeout_secs)
+        }
+        ProviderProtocol::Anthropic => create_anthropic_from_registry(config, request_timeout_secs),
+        ProviderProtocol::Ollama => create_ollama_from_registry(config, request_timeout_secs),
         ProviderProtocol::GithubCopilot => {
             let provider =
                 github_copilot::GithubCopilotProvider::new(config, request_timeout_secs)?;
@@ -244,8 +246,22 @@ async fn create_bedrock_provider(config: &LlmConfig) -> Result<Arc<dyn LlmProvid
     Ok(Arc::new(provider))
 }
 
+fn build_timeout_http_client(
+    provider_id: &str,
+    request_timeout_secs: u64,
+) -> Result<reqwest::Client, LlmError> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(request_timeout_secs))
+        .build()
+        .map_err(|e| LlmError::RequestFailed {
+            provider: provider_id.to_string(),
+            reason: format!("Failed to build HTTP client: {e}"),
+        })
+}
+
 fn create_openai_compat_from_registry(
     config: &RegistryProviderConfig,
+    request_timeout_secs: u64,
 ) -> Result<Arc<dyn LlmProvider>, LlmError> {
     use rig::providers::openai;
 
@@ -282,7 +298,10 @@ fn create_openai_compat_from_registry(
             "no-key".to_string()
         });
 
-    let mut builder = openai::Client::builder().api_key(&api_key);
+    let http_client = build_timeout_http_client(&config.provider_id, request_timeout_secs)?;
+    let mut builder = openai::Client::<reqwest::Client>::builder()
+        .api_key(&api_key)
+        .http_client(http_client);
     if !config.base_url.is_empty() {
         builder = builder.base_url(&config.base_url);
     }
@@ -305,6 +324,7 @@ fn create_openai_compat_from_registry(
         provider = %config.provider_id,
         model = %config.model,
         base_url = %config.base_url,
+        timeout_secs = request_timeout_secs,
         "Using OpenAI-compatible provider"
     );
 
@@ -315,6 +335,7 @@ fn create_openai_compat_from_registry(
 
 fn create_anthropic_from_registry(
     config: &RegistryProviderConfig,
+    request_timeout_secs: u64,
 ) -> Result<Arc<dyn LlmProvider>, LlmError> {
     // Route to OAuth provider when an OAuth token is present and no real API
     // key was provided. When both are set, the API key takes priority (standard
@@ -345,15 +366,14 @@ fn create_anthropic_from_registry(
             provider: config.provider_id.clone(),
         })?;
 
-    let client: anthropic::Client = if config.base_url.is_empty() {
-        anthropic::Client::new(&api_key)
-    } else {
-        anthropic::Client::builder()
-            .api_key(&api_key)
-            .base_url(&config.base_url)
-            .build()
+    let http_client = build_timeout_http_client(&config.provider_id, request_timeout_secs)?;
+    let mut builder = anthropic::Client::<reqwest::Client>::builder()
+        .api_key(&api_key)
+        .http_client(http_client);
+    if !config.base_url.is_empty() {
+        builder = builder.base_url(&config.base_url);
     }
-    .map_err(|e| LlmError::RequestFailed {
+    let client: anthropic::Client = builder.build().map_err(|e| LlmError::RequestFailed {
         provider: config.provider_id.clone(),
         reason: format!("Failed to create Anthropic client: {e}"),
     })?;
@@ -374,6 +394,7 @@ fn create_anthropic_from_registry(
         provider = %config.provider_id,
         model = %config.model,
         base_url = if config.base_url.is_empty() { "default" } else { &config.base_url },
+        timeout_secs = request_timeout_secs,
         "Using Anthropic provider"
     );
 
@@ -386,18 +407,22 @@ fn create_anthropic_from_registry(
 
 fn create_ollama_from_registry(
     config: &RegistryProviderConfig,
+    request_timeout_secs: u64,
 ) -> Result<Arc<dyn LlmProvider>, LlmError> {
     use rig::client::Nothing;
     use rig::providers::ollama;
 
-    let client: ollama::Client = ollama::Client::builder()
-        .base_url(&config.base_url)
+    let http_client = build_timeout_http_client(&config.provider_id, request_timeout_secs)?;
+    let mut builder = ollama::Client::<reqwest::Client>::builder()
         .api_key(Nothing)
-        .build()
-        .map_err(|e| LlmError::RequestFailed {
-            provider: config.provider_id.clone(),
-            reason: format!("Failed to create Ollama client: {e}"),
-        })?;
+        .http_client(http_client);
+    if !config.base_url.is_empty() {
+        builder = builder.base_url(&config.base_url);
+    }
+    let client: ollama::Client = builder.build().map_err(|e| LlmError::RequestFailed {
+        provider: config.provider_id.clone(),
+        reason: format!("Failed to create Ollama client: {e}"),
+    })?;
 
     let model = client.completion_model(&config.model);
 
@@ -405,6 +430,7 @@ fn create_ollama_from_registry(
         provider = %config.provider_id,
         model = %config.model,
         base_url = %config.base_url,
+        timeout_secs = request_timeout_secs,
         "Using Ollama provider"
     );
 
@@ -430,6 +456,13 @@ async fn create_openai_codex_provider(
             provider: "openai_codex".to_string(),
         })?;
 
+    create_openai_codex_provider_from_config(codex, config.request_timeout_secs).await
+}
+
+async fn create_openai_codex_provider_from_config(
+    codex: &OpenAiCodexConfig,
+    request_timeout_secs: u64,
+) -> Result<Arc<dyn LlmProvider>, LlmError> {
     let session_mgr = Arc::new(OpenAiCodexSessionManager::new(codex.clone())?);
     session_mgr.ensure_authenticated().await?;
 
@@ -439,7 +472,7 @@ async fn create_openai_codex_provider(
         &codex.model,
         &codex.api_base_url,
         token.expose_secret(),
-        config.request_timeout_secs,
+        request_timeout_secs,
     )?);
 
     tracing::info!(
@@ -452,6 +485,20 @@ async fn create_openai_codex_provider(
         provider,
         session_mgr,
     )))
+}
+
+#[cfg(feature = "bedrock")]
+async fn create_bedrock_provider_from_config(
+    config: &BedrockConfig,
+) -> Result<Arc<dyn LlmProvider>, LlmError> {
+    let provider = bedrock::BedrockProvider::new(config).await?;
+    tracing::debug!(
+        "Using AWS Bedrock (Converse API, region: {}, model: {})",
+        config.region,
+        provider.active_model_name(),
+    );
+
+    Ok(Arc::new(provider))
 }
 
 /// Create a cheap/fast LLM provider for lightweight tasks (heartbeat, routing, evaluation).
@@ -526,13 +573,104 @@ fn create_cheap_provider_for_backend(
     Ok(Some(provider))
 }
 
+/// Create a fallback provider for a specific backend.
+///
+/// Handles backend-specific provider construction:
+/// - `nearai` — clones NearAiConfig, swaps model, uses `create_llm_provider_with_config`
+/// - `bedrock` — clones BedrockConfig, swaps model, uses native Bedrock provider
+/// - `gemini_oauth` — clones GeminiOauthConfig, swaps model, uses GeminiOauthProvider
+/// - `openai_codex` — clones OpenAiCodexConfig, swaps model, uses Codex provider factory
+/// - All others — clones `RegistryProviderConfig`, swaps model, uses `create_registry_provider`
+async fn create_fallback_provider_for_backend(
+    config: &LlmConfig,
+    session: Arc<SessionManager>,
+    fallback_model: &str,
+) -> Result<Option<Arc<dyn LlmProvider>>, LlmError> {
+    if config.backend == "nearai" {
+        let mut fallback_config = config.nearai.clone();
+        fallback_config.model = fallback_model.to_string();
+        let provider = create_llm_provider_with_config(
+            &fallback_config,
+            session,
+            config.request_timeout_secs,
+        )?;
+        return Ok(Some(provider));
+    }
+
+    if config.backend == "bedrock" {
+        #[cfg(feature = "bedrock")]
+        {
+            let Some(ref bedrock_config) = config.bedrock else {
+                return Err(LlmError::RequestFailed {
+                    provider: "bedrock".to_string(),
+                    reason: "Bedrock config not available for fallback model".to_string(),
+                });
+            };
+            let mut fallback_bedrock_config = bedrock_config.clone();
+            fallback_bedrock_config.model = fallback_model.to_string();
+            let provider = create_bedrock_provider_from_config(&fallback_bedrock_config).await?;
+            return Ok(Some(provider));
+        }
+        #[cfg(not(feature = "bedrock"))]
+        {
+            return Err(LlmError::RequestFailed {
+                provider: "bedrock".to_string(),
+                reason: "Bedrock support not compiled. Rebuild with --features bedrock".to_string(),
+            });
+        }
+    }
+
+    if config.backend == "gemini_oauth" {
+        let Some(ref gemini_config) = config.gemini_oauth else {
+            return Err(LlmError::RequestFailed {
+                provider: "gemini_oauth".to_string(),
+                reason: "Gemini OAuth config not available for fallback model".to_string(),
+            });
+        };
+        let mut fallback_gemini_config = gemini_config.clone();
+        fallback_gemini_config.model = fallback_model.to_string();
+        let provider = GeminiOauthProvider::new(fallback_gemini_config)?;
+        return Ok(Some(Arc::new(provider)));
+    }
+
+    if config.backend == "openai_codex" {
+        let Some(ref codex_config) = config.openai_codex else {
+            return Err(LlmError::RequestFailed {
+                provider: "openai_codex".to_string(),
+                reason: "OpenAI Codex config not available for fallback model".to_string(),
+            });
+        };
+        let mut fallback_codex_config = codex_config.clone();
+        fallback_codex_config.model = fallback_model.to_string();
+        let provider = create_openai_codex_provider_from_config(
+            &fallback_codex_config,
+            config.request_timeout_secs,
+        )
+        .await?;
+        return Ok(Some(provider));
+    }
+
+    let reg_config = config.provider.as_ref().ok_or_else(|| LlmError::RequestFailed {
+        provider: config.backend.clone(),
+        reason: format!(
+            "Cannot create fallback provider for backend '{}': no registry provider config available",
+            config.backend
+        ),
+    })?;
+
+    let mut fallback_reg_config = reg_config.clone();
+    fallback_reg_config.model = fallback_model.to_string();
+    let provider = create_registry_provider(&fallback_reg_config, config.request_timeout_secs)?;
+    Ok(Some(provider))
+}
+
 /// Build the full LLM provider chain with all configured wrappers.
 ///
 /// Applies decorators in this order:
 /// 1. Raw provider (from config)
 /// 2. RetryProvider (per-provider retry with exponential backoff)
 /// 3. SmartRoutingProvider (cheap/primary split when cheap model is configured)
-/// 4. FailoverProvider (fallback model when primary fails)
+/// 4. FailoverProvider (same-backend fallback model when primary fails)
 /// 5. CircuitBreakerProvider (fast-fail when backend is degraded)
 /// 6. CachedProvider (in-memory response cache)
 ///
@@ -607,19 +745,53 @@ pub async fn build_provider_chain(
     };
 
     // 3. Failover
-    let llm: Arc<dyn LlmProvider> = if let Some(ref fallback_model) = config.nearai.fallback_model {
-        if fallback_model == &config.nearai.model {
+    let llm: Arc<dyn LlmProvider> = if let Some(fallback_model) = config.fallback_model_name() {
+        let primary_model = if config.backend == "nearai" {
+            config.nearai.model.as_str()
+        } else if config.backend == "bedrock" {
+            config
+                .bedrock
+                .as_ref()
+                .map(|cfg| cfg.model.as_str())
+                .unwrap_or_else(|| llm.model_name())
+        } else if config.backend == "gemini_oauth" {
+            config
+                .gemini_oauth
+                .as_ref()
+                .map(|cfg| cfg.model.as_str())
+                .unwrap_or_else(|| llm.model_name())
+        } else if config.backend == "openai_codex" {
+            config
+                .openai_codex
+                .as_ref()
+                .map(|cfg| cfg.model.as_str())
+                .unwrap_or_else(|| llm.model_name())
+        } else {
+            config
+                .provider
+                .as_ref()
+                .map(|cfg| cfg.model.as_str())
+                .unwrap_or_else(|| llm.model_name())
+        };
+
+        if fallback_model == primary_model {
             tracing::warn!(
                 "fallback_model is the same as primary model, failover may not be effective"
             );
         }
-        let mut fallback_config = config.nearai.clone();
-        fallback_config.model = fallback_model.clone();
-        let fallback = create_llm_provider_with_config(
-            &fallback_config,
+        let fallback = create_fallback_provider_for_backend(
+            config,
             session.clone(),
-            config.request_timeout_secs,
-        )?;
+            fallback_model,
+        )
+        .await?
+        .ok_or_else(|| LlmError::RequestFailed {
+            provider: config.backend.clone(),
+            reason: format!(
+                "Failed to create fallback provider for model '{fallback_model}' on backend '{}'",
+                config.backend
+            ),
+        })?;
         tracing::debug!(
             primary = %llm.model_name(),
             fallback = %fallback.model_name(),
@@ -709,7 +881,16 @@ pub fn create_gemini_oauth_provider(config: &LlmConfig) -> Result<Arc<dyn LlmPro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, Instant};
+
+    use axum::{Json, Router, routing::post};
+    use secrecy::SecretString;
+    use serde_json::json;
+    use tokio::net::TcpListener;
+    use tokio::sync::oneshot;
+
     use crate::llm::config::NearAiConfig;
+    use crate::llm::provider::ChatMessage;
 
     fn test_nearai_config() -> NearAiConfig {
         NearAiConfig {
@@ -740,9 +921,52 @@ mod tests {
             gemini_oauth: None,
             request_timeout_secs: 120,
             cheap_model: None,
+            fallback_model: None,
             smart_routing_cascade: true,
             openai_codex: None,
         }
+    }
+
+    async fn start_delayed_openai_server(delay: Duration) -> (String, oneshot::Sender<()>) {
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move || async move {
+                tokio::time::sleep(delay).await;
+                Json(json!({
+                    "id": "chatcmpl-timeout-test",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": "primary-model",
+                    "choices": [{
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "late response"},
+                        "finish_reason": "stop"
+                    }],
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "total_tokens": 2
+                    }
+                }))
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("failed to bind delayed OpenAI test server");
+        let addr = listener
+            .local_addr()
+            .expect("failed to read delayed OpenAI test server address");
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
+                .await;
+        });
+
+        (format!("http://{addr}/v1"), shutdown_tx)
     }
 
     #[test]
@@ -865,5 +1089,100 @@ mod tests {
         // None when nothing configured
         let config = test_llm_config();
         assert_eq!(config.cheap_model_name(), None);
+    }
+
+    #[test]
+    fn test_create_fallback_provider_generic_registry_model() {
+        let mut config = test_llm_config();
+        config.backend = "openai_compatible".to_string();
+        config.provider = Some(RegistryProviderConfig {
+            protocol: ProviderProtocol::OpenAiCompletions,
+            provider_id: "openai_compatible".to_string(),
+            api_key: None,
+            base_url: "http://localhost:1234/v1".to_string(),
+            model: "primary-model".to_string(),
+            extra_headers: Vec::new(),
+            oauth_token: None,
+            is_codex_chatgpt: false,
+            refresh_token: None,
+            auth_path: None,
+            cache_retention: CacheRetention::default(),
+            unsupported_params: Vec::new(),
+        });
+        config.fallback_model = Some("fallback-model".to_string());
+
+        let session = Arc::new(SessionManager::new(SessionConfig::default()));
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let provider = rt
+            .block_on(create_fallback_provider_for_backend(
+                &config,
+                session,
+                "fallback-model",
+            ))
+            .expect("fallback provider should be created");
+
+        assert!(provider.is_some(), "Should return Some(provider)");
+        assert_eq!(
+            provider.unwrap().model_name(),
+            "fallback-model",
+            "Fallback provider should use the overridden model name"
+        );
+    }
+
+    #[test]
+    fn test_fallback_model_name_resolution() {
+        let mut config = test_llm_config();
+        config.fallback_model = Some("generic".to_string());
+        config.nearai.fallback_model = Some("nearai".to_string());
+        assert_eq!(config.fallback_model_name(), Some("generic"));
+
+        let mut config = test_llm_config();
+        config.nearai.fallback_model = Some("nearai".to_string());
+        assert_eq!(config.fallback_model_name(), Some("nearai"));
+
+        let mut config = test_llm_config();
+        config.backend = "openai".to_string();
+        config.nearai.fallback_model = Some("nearai".to_string());
+        assert_eq!(config.fallback_model_name(), None);
+
+        let config = test_llm_config();
+        assert_eq!(config.fallback_model_name(), None);
+    }
+
+    #[tokio::test]
+    async fn test_registry_openai_compatible_respects_request_timeout() {
+        let (base_url, shutdown_tx) = start_delayed_openai_server(Duration::from_secs(5)).await;
+        let config = RegistryProviderConfig {
+            protocol: ProviderProtocol::OpenAiCompletions,
+            provider_id: "openai_compatible".to_string(),
+            api_key: Some(SecretString::from("test-key".to_string())),
+            base_url,
+            model: "primary-model".to_string(),
+            extra_headers: Vec::new(),
+            oauth_token: None,
+            is_codex_chatgpt: false,
+            refresh_token: None,
+            auth_path: None,
+            cache_retention: CacheRetention::default(),
+            unsupported_params: Vec::new(),
+        };
+
+        let provider = create_registry_provider(&config, 1).expect("provider should be created");
+        let started = Instant::now();
+        let result = provider
+            .complete(CompletionRequest::new(vec![ChatMessage::user("hello")]))
+            .await;
+        let elapsed = started.elapsed();
+
+        let _ = shutdown_tx.send(());
+
+        assert!(
+            result.is_err(),
+            "expected request to fail fast when the upstream hangs"
+        );
+        assert!(
+            elapsed < Duration::from_secs(3),
+            "expected client timeout to trip before runtime-style outer timeout, elapsed={elapsed:?}"
+        );
     }
 }

@@ -38,6 +38,7 @@ chmod +x /usr/local/bin/cloud-sql-proxy
 echo "==> Installing systemd services"
 cp /tmp/deploy/cloud-sql-proxy.service /etc/systemd/system/
 cp /tmp/deploy/ironclaw.service /etc/systemd/system/
+install -m 0755 /tmp/deploy/restart.sh /usr/local/bin/ironclaw-restart
 systemctl daemon-reload
 
 echo "==> Starting Cloud SQL Auth Proxy"
@@ -73,3 +74,4 @@ echo "Verify with:"
 echo "  systemctl status cloud-sql-proxy"
 echo "  systemctl status ironclaw"
 echo "  docker logs ironclaw"
+echo "  sudo ironclaw-restart --with-proxy"
