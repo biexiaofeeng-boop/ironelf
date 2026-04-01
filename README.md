@@ -173,8 +173,8 @@ written to `~/.ironclaw/.env` so they are available before the database connects
 IronClaw defaults to NEAR AI but supports many LLM providers out of the box.
 Built-in providers include **Anthropic**, **OpenAI**, **GitHub Copilot**, **Google Gemini**, **MiniMax**,
 **Mistral**, and **Ollama** (local). OpenAI-compatible services like **OpenRouter**
-(300+ models), **Together AI**, **Fireworks AI**, and self-hosted servers (**vLLM**,
-**LiteLLM**) are also supported.
+(300+ models), **DMX**, **Together AI**, **Fireworks AI**, and self-hosted servers
+(**vLLM**, **LiteLLM**) are also supported.
 
 Select your provider in the wizard, or set environment variables directly:
 
@@ -188,6 +188,14 @@ LLM_BACKEND=openai_compatible
 LLM_BASE_URL=https://openrouter.ai/api/v1
 LLM_API_KEY=sk-or-...
 LLM_MODEL=anthropic/claude-sonnet-4
+
+# Example: DMX router
+LLM_BACKEND=openai_compatible
+LLM_BASE_URL=https://www.dmxapi.cn/v1
+LLM_API_KEY=...
+LLM_MODEL=gemini-3.1-pro-preview
+LLM_CHEAP_MODEL=kimi-k2.5
+SMART_ROUTING_CASCADE=true
 ```
 
 See [docs/LLM_PROVIDERS.md](docs/LLM_PROVIDERS.md) for a full provider guide.
