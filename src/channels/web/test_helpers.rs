@@ -14,6 +14,7 @@ use crate::channels::web::auth::MultiAuthState;
 use crate::channels::web::server::{GatewayState, PerUserRateLimiter, RateLimiter, start_server};
 use crate::channels::web::sse::SseManager;
 use crate::channels::web::ws::WsConnectionTracker;
+use crate::runtime_bridge::RuntimeBridgeManager;
 
 /// Builder for constructing a [`GatewayState`] with sensible test defaults.
 ///
@@ -75,6 +76,7 @@ impl TestGatewayBuilder {
             tool_registry: None,
             store: None,
             job_manager: None,
+            runtime_bridge: Arc::new(RuntimeBridgeManager::default()),
             prompt_queue: None,
             owner_id: self.user_id.clone(),
             shutdown_tx: tokio::sync::RwLock::new(None),

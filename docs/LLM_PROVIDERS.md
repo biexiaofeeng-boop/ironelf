@@ -222,6 +222,40 @@ Set `BEDROCK_CROSS_REGION` to route requests across AWS regions for capacity:
 All providers below use `LLM_BACKEND=openai_compatible`. Set `LLM_BASE_URL` to the
 provider's OpenAI-compatible endpoint and `LLM_API_KEY` to your API key.
 
+### DMX Router
+
+[DMX](https://www.dmxapi.cn) works through the existing OpenAI-compatible path.
+Use a full base URL that already includes the `/v1` prefix.
+
+```env
+LLM_BACKEND=openai_compatible
+LLM_BASE_URL=https://www.dmxapi.cn/v1
+LLM_API_KEY=...
+LLM_MODEL=gemini-3.1-pro-preview
+
+# Optional: smart-routing inside the same DMX provider
+LLM_CHEAP_MODEL=kimi-k2.5
+SMART_ROUTING_CASCADE=true
+```
+
+Alternative DMX base URLs:
+
+```env
+# International
+LLM_BASE_URL=https://www.dmxapi.com/v1
+
+# Enterprise
+LLM_BASE_URL=https://ssvip.dmxapi.com/v1
+```
+
+Notes:
+
+- Keep `LLM_MODEL` explicit even if `/v1/models` returns a filtered list.
+- Phase 1 does not need a built-in `dmx` backend; `openai_compatible` is the
+  canonical path.
+- If you use the setup wizard, choose **"OpenAI-compatible"** and paste the
+  full DMX base URL including `/v1`.
+
 ### OpenRouter
 
 [OpenRouter](https://openrouter.ai) routes to 300+ models from a single API key.
@@ -317,5 +351,7 @@ ironclaw onboard
 ```
 
 Select **"OpenAI-compatible"** for OpenRouter, Together AI, Fireworks, vLLM, LiteLLM,
-or LM Studio. You will be prompted for the base URL and (optionally) an API key.
+LM Studio, or DMX. You will be prompted for the base URL and (optionally) an API key.
+For DMX, paste the full base URL, for example `https://www.dmxapi.cn/v1`, then set
+your desired model ID in the model-selection step.
 The model name is configured in the following step.

@@ -456,6 +456,7 @@ pub async fn jobs_restart_handler(
                     &task,
                     Some(project_dir),
                     mode,
+                    None,
                     credential_grants,
                 )
                 .await

@@ -27,6 +27,7 @@ use ironclaw::llm::registry::ProviderProtocol;
 use ironclaw::llm::{
     SessionConfig as LlmSessionConfig, SessionManager as LlmSessionManager, create_llm_provider,
 };
+use ironclaw::runtime_bridge::RuntimeBridgeManager;
 use ironclaw::secrets::SecretsStore;
 use ironclaw::tools::{Tool, ToolError, ToolOutput};
 
@@ -224,6 +225,7 @@ impl GatewayWorkflowHarness {
             tool_registry: Some(Arc::clone(&components.tools)),
             store: components.db.clone(),
             job_manager: None,
+            runtime_bridge: Arc::new(RuntimeBridgeManager::default()),
             prompt_queue: None,
             scheduler: Some(scheduler_slot.clone()),
             owner_id: user_id.clone(),

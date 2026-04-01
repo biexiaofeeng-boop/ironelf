@@ -249,8 +249,12 @@ fn cmd_status(json: bool, config_path: Option<&Path>) -> anyhow::Result<()> {
     let (backend, model) = resolve_active_from_settings(&settings);
     let registry = ProviderRegistry::load();
 
-    let fallback = std::env::var("NEARAI_FALLBACK_MODEL").ok();
-    let cheap = std::env::var("NEARAI_CHEAP_MODEL").ok();
+    let fallback = std::env::var("LLM_FALLBACK_MODEL")
+        .ok()
+        .or_else(|| std::env::var("NEARAI_FALLBACK_MODEL").ok());
+    let cheap = std::env::var("LLM_CHEAP_MODEL")
+        .ok()
+        .or_else(|| std::env::var("NEARAI_CHEAP_MODEL").ok());
 
     let description = if backend == "nearai" {
         "NEAR AI inference (default)".to_string()

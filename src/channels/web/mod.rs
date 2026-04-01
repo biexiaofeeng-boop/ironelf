@@ -49,6 +49,7 @@ use crate::db::Database;
 use crate::error::ChannelError;
 use crate::extensions::ExtensionManager;
 use crate::orchestrator::job_manager::ContainerJobManager;
+use crate::runtime_bridge::RuntimeBridgeManager;
 use crate::skills::catalog::SkillCatalog;
 use crate::skills::registry::SkillRegistry;
 use crate::tools::ToolRegistry;
@@ -100,6 +101,7 @@ impl GatewayChannel {
             tool_registry: None,
             store: None,
             job_manager: None,
+            runtime_bridge: Arc::new(RuntimeBridgeManager::default()),
             prompt_queue: None,
             scheduler: None,
             owner_id,
@@ -142,6 +144,7 @@ impl GatewayChannel {
             tool_registry: self.state.tool_registry.clone(),
             store: self.state.store.clone(),
             job_manager: self.state.job_manager.clone(),
+            runtime_bridge: self.state.runtime_bridge.clone(),
             prompt_queue: self.state.prompt_queue.clone(),
             scheduler: self.state.scheduler.clone(),
             owner_id: self.state.owner_id.clone(),

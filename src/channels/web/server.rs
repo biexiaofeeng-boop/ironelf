@@ -33,6 +33,10 @@ use crate::channels::relay::DEFAULT_RELAY_NAME;
 use crate::channels::web::auth::{
     AuthenticatedUser, CombinedAuthState, UserIdentity, auth_middleware,
 };
+use crate::channels::web::handlers::bridge::{
+    runtime_bridge_cancel_handler, runtime_bridge_events_handler, runtime_bridge_health_handler,
+    runtime_bridge_submit_handler,
+};
 use crate::channels::web::handlers::jobs::{
     job_files_list_handler, job_files_read_handler, jobs_cancel_handler, jobs_detail_handler,
     jobs_events_handler, jobs_list_handler, jobs_prompt_handler, jobs_restart_handler,
@@ -56,6 +60,7 @@ use crate::channels::web::util::{build_turns_from_db_messages, truncate_preview}
 use crate::db::Database;
 use crate::extensions::ExtensionManager;
 use crate::orchestrator::job_manager::ContainerJobManager;
+use crate::runtime_bridge::RuntimeBridgeManager;
 use crate::tools::ToolRegistry;
 use crate::workspace::Workspace;
 
@@ -358,6 +363,8 @@ pub struct GatewayState {
     pub store: Option<Arc<dyn Database>>,
     /// Container job manager for sandbox operations.
     pub job_manager: Option<Arc<ContainerJobManager>>,
+    /// Runtime bridge state machine and execution registry.
+    pub runtime_bridge: Arc<RuntimeBridgeManager>,
     /// Prompt queue for Claude Code follow-up prompts.
     pub prompt_queue: Option<PromptQueue>,
     /// Durable owner scope for persistence and unauthenticated callback flows.
@@ -467,6 +474,17 @@ pub async fn start_server(
         .route("/api/jobs/{id}/events", get(jobs_events_handler))
         .route("/api/jobs/{id}/files/list", get(job_files_list_handler))
         .route("/api/jobs/{id}/files/read", get(job_files_read_handler))
+        // Runtime bridge
+        .route("/api/runtime/health", get(runtime_bridge_health_handler))
+        .route("/api/runtime/submit", post(runtime_bridge_submit_handler))
+        .route(
+            "/api/runtime/executions/{execution_id}/events",
+            get(runtime_bridge_events_handler),
+        )
+        .route(
+            "/api/runtime/executions/{execution_id}/cancel",
+            post(runtime_bridge_cancel_handler),
+        )
         // Logs
         .route("/api/logs/events", get(logs_events_handler))
         .route("/api/logs/level", get(logs_level_get_handler))
@@ -3129,6 +3147,7 @@ mod tests {
             tool_registry: None,
             store: None,
             job_manager: None,
+            runtime_bridge: Arc::new(crate::runtime_bridge::RuntimeBridgeManager::default()),
             prompt_queue: None,
             owner_id: "test".to_string(),
             shutdown_tx: tokio::sync::RwLock::new(None),

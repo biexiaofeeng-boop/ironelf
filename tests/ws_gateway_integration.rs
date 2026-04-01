@@ -23,6 +23,7 @@ use ironclaw::channels::IncomingMessage;
 use ironclaw::channels::web::server::{GatewayState, start_server};
 use ironclaw::channels::web::sse::SseManager;
 use ironclaw::channels::web::ws::WsConnectionTracker;
+use ironclaw::runtime_bridge::RuntimeBridgeManager;
 use ironclaw_common::AppEvent;
 
 const AUTH_TOKEN: &str = "test-token-12345";
@@ -49,6 +50,7 @@ async fn start_test_server() -> (
         tool_registry: None,
         store: None,
         job_manager: None,
+        runtime_bridge: Arc::new(RuntimeBridgeManager::default()),
         prompt_queue: None,
         scheduler: None,
         owner_id: "test-user".to_string(),

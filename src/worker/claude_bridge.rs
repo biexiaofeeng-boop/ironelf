@@ -26,6 +26,7 @@
 //! └──────────────────────────────────────────────┘
 //! ```
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -37,6 +38,10 @@ use uuid::Uuid;
 
 use crate::error::WorkerError;
 use crate::worker::api::{CompletionReport, JobEventPayload, PromptResponse, WorkerHttpClient};
+
+const CLAUDE_BINARY_ENV_VARS: [&str; 2] = ["CLAUDE_CODE_BIN", "CLAUDE_BIN"];
+const CLAUDE_BINARY_FALLBACK_PATHS: [&str; 2] = ["/usr/local/bin/claude", "/usr/bin/claude"];
+const CLAUDE_BRIDGE_JOB_MODE: &str = "claude_code";
 
 /// Configuration for the Claude bridge runtime.
 pub struct ClaudeBridgeConfig {
@@ -354,6 +359,28 @@ impl ClaudeBridgeRuntime {
         extra_env: &std::collections::HashMap<String, String>,
     ) -> Result<Option<String>, WorkerError> {
         let max_turns_str = self.config.max_turns.to_string();
+        let execution_id = std::env::var("IRONCLAW_EXECUTION_ID").ok();
+        let workspace_dir = Path::new("/workspace");
+        if !workspace_dir.exists() {
+            return Err(WorkerError::ExecutionFailed {
+                reason: "workspace directory /workspace is missing in Claude Code container"
+                    .to_string(),
+            });
+        }
+
+        let claude_bin = resolve_claude_binary()?;
+        let path = std::env::var("PATH").unwrap_or_default();
+
+        tracing::info!(
+            execution_id = execution_id.as_deref().unwrap_or("unknown"),
+            job_id = %self.config.job_id,
+            job_mode = CLAUDE_BRIDGE_JOB_MODE,
+            claude_bin = %claude_bin.display(),
+            cwd = %workspace_dir.display(),
+            path,
+            resume = resume_session_id.is_some(),
+            "Resolved Claude Code runtime command"
+        );
 
         // Spawn with PTY on Unix to fix Node.js stdout buffering.
         // All arguments are passed individually via execve — never through
@@ -364,7 +391,7 @@ impl ClaudeBridgeRuntime {
                 reason: format!("failed to allocate PTY: {}", e),
             })?;
 
-            let mut cmd = pty_process::Command::new("claude");
+            let mut cmd = pty_process::Command::new(&claude_bin);
             cmd = cmd
                 .arg("-p")
                 .arg(prompt)
@@ -388,7 +415,12 @@ impl ClaudeBridgeRuntime {
             cmd = cmd.stderr(std::process::Stdio::piped());
 
             let mut child = cmd.spawn(pts).map_err(|e| WorkerError::ExecutionFailed {
-                reason: format!("failed to spawn claude with PTY: {}", e),
+                reason: format_claude_spawn_error(
+                    &claude_bin,
+                    &path,
+                    &e.to_string(),
+                    matches!(&e, pty_process::Error::Io(io) if io.kind() == std::io::ErrorKind::NotFound),
+                ),
             })?;
 
             let stderr = child
@@ -408,7 +440,7 @@ impl ClaudeBridgeRuntime {
         // exists solely for compilation on Windows targets.
         #[cfg(not(unix))]
         let (mut child, stdout, stderr) = {
-            let mut cmd = Command::new("claude");
+            let mut cmd = Command::new(&claude_bin);
             cmd.arg("-p")
                 .arg(prompt)
                 .arg("--output-format")
@@ -429,7 +461,12 @@ impl ClaudeBridgeRuntime {
                 .stderr(std::process::Stdio::piped());
 
             let mut child = cmd.spawn().map_err(|e| WorkerError::ExecutionFailed {
-                reason: format!("failed to spawn claude: {}", e),
+                reason: format_claude_spawn_error(
+                    &claude_bin,
+                    &path,
+                    &e.to_string(),
+                    e.kind() == std::io::ErrorKind::NotFound,
+                ),
             })?;
 
             let stdout_pipe = child
@@ -575,6 +612,72 @@ impl ClaudeBridgeRuntime {
 ///
 /// Produces a Claude Code project settings file that auto-approves the listed
 /// tools while leaving any unknown/future tools unapproved (defense-in-depth).
+fn resolve_claude_binary() -> Result<PathBuf, WorkerError> {
+    for env_name in CLAUDE_BINARY_ENV_VARS {
+        if let Some(candidate) = std::env::var_os(env_name)
+            && !candidate.is_empty()
+        {
+            let candidate_path = PathBuf::from(candidate);
+            if candidate_path.exists() {
+                return Ok(candidate_path);
+            }
+        }
+    }
+
+    for candidate in CLAUDE_BINARY_FALLBACK_PATHS {
+        let candidate_path = PathBuf::from(candidate);
+        if candidate_path.exists() {
+            return Ok(candidate_path);
+        }
+    }
+
+    if let Some(path_os) = std::env::var_os("PATH") {
+        for base in std::env::split_paths(&path_os) {
+            let candidate = base.join("claude");
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    let searched = CLAUDE_BINARY_ENV_VARS
+        .iter()
+        .map(|name| format!("{name}={}", std::env::var(name).unwrap_or_default()))
+        .chain(
+            CLAUDE_BINARY_FALLBACK_PATHS
+                .iter()
+                .map(|path| (*path).to_string()),
+        )
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    Err(WorkerError::ExecutionFailed {
+        reason: format!(
+            "claude binary not found in runtime worker env; searched {searched}; PATH={}",
+            std::env::var("PATH").unwrap_or_default()
+        ),
+    })
+}
+
+fn format_claude_spawn_error(
+    claude_bin: &Path,
+    path: &str,
+    error: &str,
+    not_found: bool,
+) -> String {
+    if not_found {
+        return format!(
+            "claude binary not found at '{}' (PATH={path})",
+            claude_bin.display()
+        );
+    }
+
+    format!(
+        "failed to spawn claude with PTY using '{}' (PATH={path}): {error}",
+        claude_bin.display()
+    )
+}
+
 fn build_permission_settings(allowed_tools: &[String]) -> String {
     let settings = serde_json::json!({
         "permissions": {

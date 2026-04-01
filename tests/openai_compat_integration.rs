@@ -17,6 +17,7 @@ use ironclaw::llm::{
     CompletionRequest, CompletionResponse, FinishReason, LlmProvider, ToolCompletionRequest,
     ToolCompletionResponse,
 };
+use ironclaw::runtime_bridge::RuntimeBridgeManager;
 
 const AUTH_TOKEN: &str = "test-openai-token";
 
@@ -202,6 +203,7 @@ async fn start_test_server_with_provider(
         tool_registry: None,
         store: None,
         job_manager: None,
+        runtime_bridge: Arc::new(RuntimeBridgeManager::default()),
         prompt_queue: None,
         scheduler: None,
         owner_id: "test-user".to_string(),
@@ -702,6 +704,7 @@ async fn test_no_llm_provider_returns_503() {
         tool_registry: None,
         store: None,
         job_manager: None,
+        runtime_bridge: Arc::new(RuntimeBridgeManager::default()),
         prompt_queue: None,
         scheduler: None,
         owner_id: "test-user".to_string(),

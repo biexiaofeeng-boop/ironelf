@@ -505,6 +505,7 @@ mod tests {
     /// Helper to create a GatewayState for testing.
     async fn make_test_state(msg_tx: Option<mpsc::Sender<IncomingMessage>>) -> GatewayState {
         use crate::channels::web::sse::SseManager;
+        use crate::runtime_bridge::RuntimeBridgeManager;
 
         GatewayState {
             msg_tx: tokio::sync::RwLock::new(msg_tx),
@@ -518,6 +519,7 @@ mod tests {
             tool_registry: None,
             store: None,
             job_manager: None,
+            runtime_bridge: Arc::new(RuntimeBridgeManager::default()),
             prompt_queue: None,
             scheduler: None,
             owner_id: "test".to_string(),

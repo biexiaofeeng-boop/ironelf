@@ -85,6 +85,31 @@ impl Default for ContainerJobConfig {
     }
 }
 
+const WORKER_ENV_PASSTHROUGH_KEYS: &[&str] = &[
+    "TAVILY_API_KEY",
+    "BRAVE_API_KEY",
+    "IRONCLAW_WEB_SEARCH_PROVIDER",
+    "IRONCLAW_WEB_SEARCH_FALLBACK_PROVIDER",
+    "IRONCLAW_WEB_SEARCH_MAX_RESULTS",
+    "IRONCLAW_WEB_SEARCH_TIMEOUT_SECS",
+    "IRONCLAW_WEB_SEARCH_TAVILY_URL",
+    "IRONCLAW_WEB_SEARCH_BRAVE_URL",
+];
+
+fn trimmed_env_var(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn collect_worker_passthrough_env() -> Vec<String> {
+    WORKER_ENV_PASSTHROUGH_KEYS
+        .iter()
+        .filter_map(|name| trimmed_env_var(name).map(|value| format!("{name}={value}")))
+        .collect()
+}
+
 /// State of a container.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContainerState {
@@ -109,6 +134,7 @@ impl std::fmt::Display for ContainerState {
 #[derive(Debug, Clone)]
 pub struct ContainerHandle {
     pub job_id: Uuid,
+    pub execution_id: Option<String>,
     pub container_id: String,
     pub state: ContainerState,
     pub mode: JobMode,
@@ -254,6 +280,7 @@ impl ContainerJobManager {
         task: &str,
         project_dir: Option<PathBuf>,
         mode: JobMode,
+        execution_id: Option<String>,
         credential_grants: Vec<CredentialGrant>,
     ) -> Result<String, OrchestratorError> {
         // Generate auth token (stored in TokenStore, never logged)
@@ -267,6 +294,7 @@ impl ContainerJobManager {
         // Record the handle
         let handle = ContainerHandle {
             job_id,
+            execution_id,
             container_id: String::new(), // set after container creation
             state: ContainerState::Creating,
             mode,
@@ -304,6 +332,12 @@ impl ContainerJobManager {
     ) -> Result<(), OrchestratorError> {
         // Connect to Docker (reuses cached connection)
         let docker = self.docker().await?;
+        let execution_id = {
+            let containers = self.containers.read().await;
+            containers
+                .get(&job_id)
+                .and_then(|handle| handle.execution_id.clone())
+        };
 
         // Build container configuration
         let orchestrator_host = if cfg!(target_os = "linux") {
@@ -321,7 +355,18 @@ impl ContainerJobManager {
             format!("IRONCLAW_WORKER_TOKEN={}", token),
             format!("IRONCLAW_JOB_ID={}", job_id),
             format!("IRONCLAW_ORCHESTRATOR_URL={}", orchestrator_url),
+            "HOME=/home/sandbox".to_string(),
+            "USER=sandbox".to_string(),
+            "LOGNAME=sandbox".to_string(),
         ];
+
+        if let Some(execution_id) = execution_id.as_ref() {
+            env_vec.push(format!("IRONCLAW_EXECUTION_ID={execution_id}"));
+        }
+
+        if mode == JobMode::Worker {
+            env_vec.extend(collect_worker_passthrough_env());
+        }
 
         // Build volume mounts (validate project_dir stays within ~/.ironclaw/projects/)
         let mut binds = Vec::new();
@@ -403,6 +448,9 @@ impl ContainerJobManager {
         // Add Docker labels for reaper identification and orphan detection
         let mut labels = std::collections::HashMap::new();
         labels.insert("ironclaw.job_id".to_string(), job_id.to_string());
+        if let Some(execution_id) = execution_id.as_ref() {
+            labels.insert("ironclaw.execution_id".to_string(), execution_id.clone());
+        }
         labels.insert(
             "ironclaw.created_at".to_string(),
             chrono::Utc::now().to_rfc3339(),
@@ -454,8 +502,10 @@ impl ContainerJobManager {
         }
 
         tracing::info!(
+            execution_id = execution_id.as_deref().unwrap_or("unknown"),
             job_id = %job_id,
-            "Created and started worker container"
+            job_mode = %mode,
+            "Created and started runtime container"
         );
 
         Ok(())
@@ -463,13 +513,14 @@ impl ContainerJobManager {
 
     /// Stop a running container job.
     pub async fn stop_job(&self, job_id: Uuid) -> Result<(), OrchestratorError> {
-        let container_id = {
+        let handle_snapshot = {
             let containers = self.containers.read().await;
             containers
                 .get(&job_id)
-                .map(|h| h.container_id.clone())
+                .cloned()
                 .ok_or(OrchestratorError::ContainerNotFound { job_id })?
         };
+        let container_id = handle_snapshot.container_id.clone();
 
         if container_id.is_empty() {
             return Err(OrchestratorError::InvalidContainerState {
@@ -513,7 +564,12 @@ impl ContainerJobManager {
         // Revoke the auth token
         self.token_store.revoke(job_id).await;
 
-        tracing::info!(job_id = %job_id, "Stopped worker container");
+        tracing::info!(
+            execution_id = handle_snapshot.execution_id.as_deref().unwrap_or("unknown"),
+            job_id = %job_id,
+            job_mode = %handle_snapshot.mode,
+            "Stopped runtime container"
+        );
 
         Ok(())
     }
@@ -525,10 +581,14 @@ impl ContainerJobManager {
         job_id: Uuid,
         result: CompletionResult,
     ) -> Result<(), OrchestratorError> {
+        let mut execution_id: Option<String> = None;
+        let mut job_mode = JobMode::Worker;
         // Store the result before stopping
         {
             let mut containers = self.containers.write().await;
             if let Some(handle) = containers.get_mut(&job_id) {
+                execution_id = handle.execution_id.clone();
+                job_mode = handle.mode;
                 handle.completion_result = Some(result);
                 handle.state = ContainerState::Stopped;
             }
@@ -573,7 +633,12 @@ impl ContainerJobManager {
         }
         self.token_store.revoke(job_id).await;
 
-        tracing::info!(job_id = %job_id, "Completed worker container");
+        tracing::info!(
+            execution_id = execution_id.as_deref().unwrap_or("unknown"),
+            job_id = %job_id,
+            job_mode = %job_mode,
+            "Completed runtime container"
+        );
         Ok(())
     }
 
@@ -590,6 +655,13 @@ impl ContainerJobManager {
         iteration: u32,
     ) {
         if let Some(handle) = self.containers.write().await.get_mut(&job_id) {
+            tracing::debug!(
+                execution_id = handle.execution_id.as_deref().unwrap_or("unknown"),
+                job_id = %job_id,
+                job_mode = %handle.mode,
+                iteration,
+                "Updated runtime container status"
+            );
             handle.last_worker_status = message;
             handle.worker_iteration = iteration;
         }
@@ -620,6 +692,50 @@ mod tests {
         let config = ContainerJobConfig::default();
         assert_eq!(config.orchestrator_port, 50051);
         assert_eq!(config.memory_limit_mb, 2048);
+    }
+
+    #[test]
+    fn test_collect_worker_passthrough_env_includes_trimmed_web_search_settings() {
+        let original_tavily = std::env::var("TAVILY_API_KEY").ok();
+        let original_provider = std::env::var("IRONCLAW_WEB_SEARCH_PROVIDER").ok();
+        let original_timeout = std::env::var("IRONCLAW_WEB_SEARCH_TIMEOUT_SECS").ok();
+        let original_brave = std::env::var("BRAVE_API_KEY").ok();
+
+        unsafe {
+            std::env::set_var("TAVILY_API_KEY", "  tavily-test-key  ");
+            std::env::set_var("IRONCLAW_WEB_SEARCH_PROVIDER", " tavily ");
+            std::env::set_var("IRONCLAW_WEB_SEARCH_TIMEOUT_SECS", " 15 ");
+            std::env::set_var("BRAVE_API_KEY", "   ");
+        }
+
+        let env = collect_worker_passthrough_env();
+
+        assert!(env.contains(&"TAVILY_API_KEY=tavily-test-key".to_string()));
+        assert!(env.contains(&"IRONCLAW_WEB_SEARCH_PROVIDER=tavily".to_string()));
+        assert!(env.contains(&"IRONCLAW_WEB_SEARCH_TIMEOUT_SECS=15".to_string()));
+        assert!(
+            !env.iter().any(|entry| entry.starts_with("BRAVE_API_KEY=")),
+            "blank provider keys should not be passed through"
+        );
+
+        unsafe {
+            match original_tavily {
+                Some(value) => std::env::set_var("TAVILY_API_KEY", value),
+                None => std::env::remove_var("TAVILY_API_KEY"),
+            }
+            match original_provider {
+                Some(value) => std::env::set_var("IRONCLAW_WEB_SEARCH_PROVIDER", value),
+                None => std::env::remove_var("IRONCLAW_WEB_SEARCH_PROVIDER"),
+            }
+            match original_timeout {
+                Some(value) => std::env::set_var("IRONCLAW_WEB_SEARCH_TIMEOUT_SECS", value),
+                None => std::env::remove_var("IRONCLAW_WEB_SEARCH_TIMEOUT_SECS"),
+            }
+            match original_brave {
+                Some(value) => std::env::set_var("BRAVE_API_KEY", value),
+                None => std::env::remove_var("BRAVE_API_KEY"),
+            }
+        }
     }
 
     #[test]
@@ -685,6 +801,7 @@ mod tests {
                 job_id,
                 ContainerHandle {
                     job_id,
+                    execution_id: None,
                     container_id: "test".to_string(),
                     state: ContainerState::Running,
                     mode: JobMode::Worker,

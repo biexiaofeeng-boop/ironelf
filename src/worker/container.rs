@@ -150,7 +150,7 @@ impl WorkerRuntime {
 Job: {}
 Description: {}
 
-You have tools for shell commands, file operations, and code editing.
+You have tools for shell commands, file operations, native web fetching/search, and code editing.
 Work independently to complete this job. When finished, your final message MUST include the phrase "The job is complete" to signal termination."#,
             job.title, job.description
         )));

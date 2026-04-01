@@ -42,6 +42,7 @@ impl LlmConfig {
             openai_codex: None,
             request_timeout_secs: 120,
             cheap_model: None,
+            fallback_model: None,
             smart_routing_cascade: false,
         }
     }
@@ -237,6 +238,10 @@ impl LlmConfig {
         // Falls back to NearAI-specific cheap_model in provider chain logic.
         let cheap_model = optional_env("LLM_CHEAP_MODEL")?;
 
+        // Generic fallback model (works with any backend).
+        // Falls back to NearAI-specific fallback_model in provider chain logic.
+        let fallback_model = optional_env("LLM_FALLBACK_MODEL")?;
+
         // Generic smart routing cascade flag.
         // Defaults to true. Overrides NearAI-specific smart_routing_cascade.
         let smart_routing_cascade = parse_optional_env("SMART_ROUTING_CASCADE", true)?;
@@ -263,6 +268,7 @@ impl LlmConfig {
             openai_codex,
             request_timeout_secs,
             cheap_model,
+            fallback_model,
             smart_routing_cascade,
         })
     }
@@ -551,6 +557,8 @@ mod tests {
             std::env::remove_var("LLM_BACKEND");
             std::env::remove_var("LLM_BASE_URL");
             std::env::remove_var("LLM_MODEL");
+            std::env::remove_var("LLM_FALLBACK_MODEL");
+            std::env::remove_var("NEARAI_FALLBACK_MODEL");
         }
     }
 
@@ -597,6 +605,46 @@ mod tests {
         unsafe {
             std::env::remove_var("LLM_MODEL");
         }
+    }
+
+    #[test]
+    fn generic_fallback_model_resolves_for_openai_compatible_backend() {
+        let _guard = lock_env();
+        clear_openai_compatible_env();
+        // SAFETY: Under ENV_MUTEX.
+        unsafe {
+            std::env::set_var("LLM_BACKEND", "openai_compatible");
+            std::env::set_var("LLM_BASE_URL", "http://localhost:1234/v1");
+            std::env::set_var("LLM_FALLBACK_MODEL", "kimi-k2.5");
+        }
+
+        let cfg = LlmConfig::resolve(&Settings::default()).expect("resolve should succeed");
+        assert_eq!(cfg.backend, "openai_compatible");
+        assert_eq!(cfg.fallback_model.as_deref(), Some("kimi-k2.5"));
+        assert_eq!(cfg.fallback_model_name(), Some("kimi-k2.5"));
+
+        clear_openai_compatible_env();
+    }
+
+    #[test]
+    fn generic_fallback_model_overrides_nearai_legacy_fallback() {
+        let _guard = lock_env();
+        clear_openai_compatible_env();
+        // SAFETY: Under ENV_MUTEX.
+        unsafe {
+            std::env::set_var("LLM_FALLBACK_MODEL", "generic-fallback");
+            std::env::set_var("NEARAI_FALLBACK_MODEL", "legacy-fallback");
+        }
+
+        let cfg = LlmConfig::resolve(&Settings::default()).expect("resolve should succeed");
+        assert_eq!(cfg.fallback_model.as_deref(), Some("generic-fallback"));
+        assert_eq!(
+            cfg.nearai.fallback_model.as_deref(),
+            Some("legacy-fallback")
+        );
+        assert_eq!(cfg.fallback_model_name(), Some("generic-fallback"));
+
+        clear_openai_compatible_env();
     }
 
     #[test]
