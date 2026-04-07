@@ -2,155 +2,110 @@
 
 ## 目标
 
-把 S10.B 第二波拆成可以独立执行、独立验证、独立回滚的任务卡。
+把 S10.B 后续动作拆成可以独立执行、独立验证、独立回滚的任务卡，并明确“目录/remote 优先，内部实现名可保留”。
 
-## T11 CLI Alias Layer
+## T11 Remote Canonicalization
 
 范围：
 
-- `src/cli/mod.rs`
-- `src/main.rs`
-- `src/cli/service.rs`
-- `src/cli/snapshots/*`
+- 当前仓 `git remote`
+- 新仓 `git@github.com:biexiaofeeng-boop/chimera-iceclaw.git`
 
 任务：
 
-1. 盘点 `ironclaw` 命令名、帮助文案、service 子命令输出
-2. 设计 `chimera-iceclaw` wrapper 或 alias 方案
-3. 明确是否需要保留 `ironclaw` 为主命令
+1. 在旧工作区接入 `chimera-iceclaw` remote
+2. 同步 `main` 与当前开发分支
+3. 保留旧 `origin` 为回退基线
 
 验收：
 
-- `ironclaw` 继续可用
-- 新 alias 方案可说明
-- 帮助文案不引入歧义
+- 新 remote 可 fetch / push
+- 旧 remote 不丢
+- 当前联调分支可在新仓存在
 
-## T12 Base Dir Compatibility
-
-范围：
-
-- `src/bootstrap.rs`
-- `src/config/*`
-- `src/settings.rs`
-- `src/setup/*`
-- `src/llm/session.rs`
-- `src/pairing/store.rs`
-
-任务：
-
-1. 梳理所有 `~/.ironclaw` 读写点
-2. 设计新旧目录探测顺序
-3. 设计迁移脚本或迁移子命令
-
-验收：
-
-- 给出双路径读写策略
-- 给出迁移/回滚步骤
-- 明确哪些状态文件必须一起迁
-
-## T13 Runtime Label Compatibility
+## T12 Local Directory Cutover
 
 范围：
 
-- `src/orchestrator/job_manager.rs`
-- `src/orchestrator/reaper.rs`
-- `src/config/sandbox.rs`
-- `src/sandbox/config.rs`
-- `src/settings.rs`
-
-任务：
-
-1. 盘点 `ironclaw.job_id` / `ironclaw-worker:*` / container name
-2. 设计新旧 label 双识别
-3. 设计配置开关或灰度切换参数
-
-验收：
-
-- 旧 worker / 旧容器仍能被识别
-- 新 label 不影响收口与回收
-- rollback 明确
-
-## T14 Web/UI Local Storage Naming
-
-范围：
-
-- `src/channels/web/static/app.js`
-- `src/channels/web/static/theme-init.js`
-- `src/channels/web/static/i18n/index.js`
-
-任务：
-
-1. 盘点 `ironclaw-theme` / `ironclaw_language`
-2. 设计 localStorage key 兼容策略
-3. 避免升级后丢用户偏好
-
-验收：
-
-- 升级前后的主题和语言设置可继承
-- 不出现空白页或首屏回归
-
-## T15 CI / Test Fixture Cleanup
-
-范围：
-
-- `.github/workflows/*`
-- `tests/e2e/*`
-- `src/cli/snapshots/*`
-
-任务：
-
-1. 盘点测试和 workflow 对 `ironclaw` binary / path / repo 名的依赖
-2. 区分必须改与可保留兼容
-3. 输出最小修改波次
-
-验收：
-
-- 给出 hotfile list
-- 给出拆批策略
-- 不与生产切换混做
-
-## T16 Remote Cutover Prep
-
-范围：
-
-- git remote
 - `/Users/sourcefire/X-lab/chimera-iceclaw`
 - `/Users/sourcefire/X-lab/ironelf`
 
 任务：
 
-1. 新增 `chimera-iceclaw` remote
-2. 准备新目录 clone / worktree
-3. 形成切换日 checklist
+1. 创建新 canonical 工作目录
+2. 在新目录中以 `chimera-iceclaw` 作为 `origin`
+3. 将旧仓保留为 `ironelf-legacy` 或回退参照
 
 验收：
 
-- push / fetch 命令明确
-- 新旧目录并存策略明确
-- rollback 到旧目录明确
+- 新目录可正常 `git status`
+- 新目录可正常切到当前开发分支
+- 旧目录仍可独立工作
 
-## T17 Production Cutover Checklist
+## T13 Top-Level Project Naming
 
 范围：
 
-- `deploy/*.service`
-- `deploy/setup.sh`
-- `deploy/restart.sh`
-- 运维手册
+- `README*`
+- `Cargo.toml` metadata
+- 项目索引文档
 
 任务：
 
-1. 明确 canonical service 切换窗口
-2. 明确 `.env`、unit、container、日志核查步骤
-3. 明确失败回滚步骤
+1. 保持顶层对外项目名使用 `chimera-iceclaw`
+2. 明确说明内部 `ironclaw` 命名仍保留
+3. 降低外部命名与内部实现名之间的歧义
 
 验收：
 
-- 有逐条 checklist
-- 有切换前/切换后验证项
-- 有 rollback checklist
+- 对外项目名统一
+- 内部实现名保留策略明确
 
-## T18 Close-Out Gate
+## T14 Rollback Baseline
+
+范围：
+
+- 旧目录
+- 旧 remote
+- 当前运行面
+
+任务：
+
+1. 明确保留旧目录 `/Users/sourcefire/X-lab/ironelf`
+2. 明确保留旧 remote 与回退命令
+3. 明确 smoke 失败后的回切方式
+
+验收：
+
+- rollback 命令明确
+- 不依赖现场临时记忆
+
+## T15 Optional Long-Term Cleanup Backlog
+
+范围：
+
+- `src/cli/*`
+- `src/bootstrap.rs`
+- `src/settings.rs`
+- `src/orchestrator/*`
+- `.github/workflows/*`
+- `tests/e2e/*`
+
+任务：
+
+1. 将以下项目列为长期可选项，而非当前切换阻塞项：
+   - CLI alias
+   - `~/.ironclaw` 迁移
+   - runtime labels/image rename
+   - CI/tests hardcode cleanup
+2. 只在确有业务收益时再单独开包
+
+验收：
+
+- backlog 定义清楚
+- 不误导为当前必做项
+
+## T16 Close-Out Gate
 
 任务：
 
