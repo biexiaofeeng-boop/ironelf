@@ -1,12 +1,16 @@
 <p align="center">
-  <img src="ironclaw.png?v=2" alt="IronClaw" width="200"/>
+  <img src="ironclaw.png?v=2" alt="Chimera-Iceclaw" width="200"/>
 </p>
 
-<h1 align="center">IronClaw</h1>
+<h1 align="center">Chimera-Iceclaw</h1>
 
 <p align="center">
   <strong>安全可靠的个人 AI 助手，始终站在你这边</strong>
 </p>
+
+> 迁移说明：`chimera-iceclaw` 将作为新的 canonical 项目名与 service 名。
+> S10.B 过渡期内，Rust 包名、二进制名和默认配置目录仍保留 `ironclaw` / `~/.ironclaw`，
+> 用于兼容现有联调链路和快速回滚。
 
 <p align="center">
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache%202.0-blue.svg" alt="License: MIT OR Apache-2.0" /></a>

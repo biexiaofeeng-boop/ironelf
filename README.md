@@ -1,12 +1,16 @@
 <p align="center">
-  <img src="ironclaw.png?v=2" alt="IronClaw" width="200"/>
+  <img src="ironclaw.png?v=2" alt="Chimera-Iceclaw" width="200"/>
 </p>
 
-<h1 align="center">IronClaw</h1>
+<h1 align="center">Chimera-Iceclaw</h1>
 
 <p align="center">
   <strong>Your secure personal AI assistant, always on your side</strong>
 </p>
+
+> Transition note: `chimera-iceclaw` is the canonical project and service name going forward.
+> During S10.B, the Rust package, binary, and default config path remain `ironclaw` / `~/.ironclaw`
+> for compatibility and rollback safety.
 
 <p align="center">
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache%202.0-blue.svg" alt="License: MIT OR Apache-2.0" /></a>

@@ -3,12 +3,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-BASE_DIR="${IRONCLAW_BASE_DIR:-${HOME}/.ironclaw}"
+BASE_DIR="${CHIMERA_ICECLAW_BASE_DIR:-${IRONCLAW_BASE_DIR:-${HOME}/.ironclaw}}"
 RUN_DIR="${BASE_DIR}/run"
 LOG_DIR="${BASE_DIR}/logs"
 PID_FILE="${RUN_DIR}/ironclaw.pid"
 CURRENT_LOG="${LOG_DIR}/ironclaw.current.log"
 DEFAULT_RUST_LOG="${RUST_LOG:-ironclaw=info}"
+SERVICE_LABEL="${CHIMERA_ICECLAW_SERVICE_LABEL:-chimera-iceclaw}"
+LEGACY_LABEL="${IRONCLAW_LEGACY_LABEL:-ironclaw}"
 
 usage() {
   cat <<'EOF'
@@ -21,8 +23,9 @@ Usage:
 
 Notes:
   - Intended for macOS single-machine deployment/development.
-  - Logs are written to ~/.ironclaw/logs/
-  - PID file is stored at ~/.ironclaw/run/ironclaw.pid
+  - Canonical service label is chimera-iceclaw; the binary remains ironclaw.
+  - Logs are written to ~/.ironclaw/logs/ by default.
+  - PID file is stored at ~/.ironclaw/run/ironclaw.pid for compatibility.
 EOF
 }
 
@@ -90,7 +93,7 @@ is_running() {
 }
 
 build_binary() {
-  echo "==> Building ironclaw"
+  echo "==> Building ${SERVICE_LABEL} (binary: ${LEGACY_LABEL})"
   (
     cd "${REPO_ROOT}"
     CARGO_TARGET_DIR="${target_dir}" cargo build
@@ -105,7 +108,7 @@ start_service() {
     local existing_pid
     existing_pid="$(discover_pid)"
     printf '%s\n' "${existing_pid}" > "${PID_FILE}"
-    echo "ironclaw is already running (pid ${existing_pid})"
+    echo "${SERVICE_LABEL} is already running (pid ${existing_pid})"
     echo "log: ${CURRENT_LOG}"
     return 0
   fi
@@ -125,7 +128,7 @@ start_service() {
   : > "${log_file}"
   ln -sfn "${log_file}" "${CURRENT_LOG}"
 
-  echo "==> Starting ironclaw"
+  echo "==> Starting ${SERVICE_LABEL}"
   echo "repo: ${REPO_ROOT}"
   echo "binary: ${binary_path}"
   echo "log: ${log_file}"
@@ -141,10 +144,10 @@ start_service() {
 
   sleep 2
   if is_running; then
-    echo "ironclaw started (pid $(pid_value))"
+    echo "${SERVICE_LABEL} started (pid $(pid_value))"
     echo "tail logs with: bash deploy/macos-service.sh logs"
   else
-    echo "ERROR: ironclaw failed to start"
+    echo "ERROR: ${SERVICE_LABEL} failed to start"
     echo "check log: ${log_file}"
     exit 1
   fi
@@ -154,13 +157,13 @@ stop_service() {
   ensure_dirs
   if ! is_running; then
     rm -f "${PID_FILE}"
-    echo "ironclaw is not running"
+    echo "${SERVICE_LABEL} is not running"
     return 0
   fi
 
   local pid
   pid="$(discover_pid)"
-  echo "==> Stopping ironclaw (pid ${pid})"
+  echo "==> Stopping ${SERVICE_LABEL} (pid ${pid})"
   kill "${pid}" 2>/dev/null || true
 
   local waited=0
@@ -175,7 +178,7 @@ stop_service() {
   done
 
   rm -f "${PID_FILE}"
-  echo "ironclaw stopped"
+  echo "${SERVICE_LABEL} stopped"
 }
 
 status_service() {

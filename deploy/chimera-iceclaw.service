@@ -1,0 +1,26 @@
+[Unit]
+Description=Chimera-Iceclaw AI Assistant
+After=cloud-sql-proxy.service docker.service
+Requires=cloud-sql-proxy.service
+
+[Service]
+Type=simple
+EnvironmentFile=-/opt/ironclaw/.env
+EnvironmentFile=-/opt/chimera-iceclaw/.env
+# The registry path may lag the naming transition; override CONTAINER_IMAGE_REPO
+# in the env file when the image repository is renamed.
+ExecStartPre=/bin/bash -c 'docker pull ${CONTAINER_IMAGE_REPO:-us-central1-docker.pkg.dev/ironclaw-prod/ironclaw/agent}:${IRONCLAW_VERSION:-latest}'
+ExecStart=/bin/bash -c 'env_file="${CHIMERA_ICECLAW_ENV_FILE:-/opt/chimera-iceclaw/.env}"; \
+  if [ ! -f "${env_file}" ] && [ -f /opt/ironclaw/.env ]; then env_file=/opt/ironclaw/.env; fi; \
+  docker run --rm \
+  --name ${CHIMERA_ICECLAW_CONTAINER_NAME:-chimera-iceclaw} \
+  --env-file "${env_file}" \
+  -p 3000:3000 \
+  ${CONTAINER_IMAGE_REPO:-us-central1-docker.pkg.dev/ironclaw-prod/ironclaw/agent}:${IRONCLAW_VERSION:-latest} \
+  --no-onboard'
+ExecStop=/bin/bash -c 'docker stop ${CHIMERA_ICECLAW_CONTAINER_NAME:-chimera-iceclaw}'
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

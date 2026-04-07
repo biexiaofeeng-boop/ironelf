@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# VM bootstrap script for IronClaw on GCP Compute Engine.
+# VM bootstrap script for Chimera-Iceclaw on GCP Compute Engine.
 #
 # Run on a fresh Debian 12 VM after SSH:
 #   sudo bash setup.sh
@@ -38,7 +38,9 @@ chmod +x /usr/local/bin/cloud-sql-proxy
 echo "==> Installing systemd services"
 cp /tmp/deploy/cloud-sql-proxy.service /etc/systemd/system/
 cp /tmp/deploy/ironclaw.service /etc/systemd/system/
+cp /tmp/deploy/chimera-iceclaw.service /etc/systemd/system/
 install -m 0755 /tmp/deploy/restart.sh /usr/local/bin/ironclaw-restart
+install -m 0755 /tmp/deploy/restart.sh /usr/local/bin/chimera-iceclaw-restart
 systemctl daemon-reload
 
 echo "==> Starting Cloud SQL Auth Proxy"
@@ -52,26 +54,37 @@ gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 echo "==> Creating config directory"
 # Owned by root, readable only by root. Docker reads --env-file as root
 # before dropping to uid 1000 (ironclaw) inside the container.
-mkdir -p /opt/ironclaw
-chmod 700 /opt/ironclaw
+mkdir -p /opt/chimera-iceclaw
+chmod 700 /opt/chimera-iceclaw
 
-if [ ! -f /opt/ironclaw/.env ]; then
-  echo "WARNING: /opt/ironclaw/.env does not exist."
-  echo "Create it with your configuration before starting IronClaw."
+if [ ! -d /opt/ironclaw ]; then
+  mkdir -p /opt/ironclaw
+  chmod 700 /opt/ironclaw
+fi
+
+if [ ! -f /opt/chimera-iceclaw/.env ] && [ ! -f /opt/ironclaw/.env ]; then
+  echo "WARNING: neither /opt/chimera-iceclaw/.env nor /opt/ironclaw/.env exists."
+  echo "Create one of them with your configuration before starting Chimera-Iceclaw."
   echo "See deploy/env.example for the required variables."
   echo ""
-  echo "Then run: systemctl enable ironclaw && systemctl start ironclaw"
+  echo "Then run: systemctl enable chimera-iceclaw && systemctl start chimera-iceclaw"
 else
-  chmod 600 /opt/ironclaw/.env
-  echo "==> Starting IronClaw"
-  systemctl enable ironclaw
-  systemctl start ironclaw
+  if [ -f /opt/chimera-iceclaw/.env ]; then
+    chmod 600 /opt/chimera-iceclaw/.env
+  fi
+  if [ -f /opt/ironclaw/.env ]; then
+    chmod 600 /opt/ironclaw/.env
+  fi
+  echo "==> Starting Chimera-Iceclaw"
+  systemctl enable chimera-iceclaw
+  systemctl start chimera-iceclaw
 fi
 
 echo "==> Setup complete"
 echo ""
 echo "Verify with:"
 echo "  systemctl status cloud-sql-proxy"
-echo "  systemctl status ironclaw"
-echo "  docker logs ironclaw"
-echo "  sudo ironclaw-restart --with-proxy"
+echo "  systemctl status chimera-iceclaw"
+echo "  docker logs chimera-iceclaw"
+echo "  sudo chimera-iceclaw-restart --with-proxy"
+echo "  sudo ironclaw-restart --service ironclaw   # legacy rollback alias"

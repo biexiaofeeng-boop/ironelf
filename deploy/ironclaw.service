@@ -1,22 +1,25 @@
 [Unit]
-Description=IronClaw AI Assistant
+Description=IronClaw AI Assistant (legacy compatibility unit)
 After=cloud-sql-proxy.service docker.service
 Requires=cloud-sql-proxy.service
 
 [Service]
 Type=simple
-EnvironmentFile=/opt/ironclaw/.env
+EnvironmentFile=-/opt/chimera-iceclaw/.env
+EnvironmentFile=-/opt/ironclaw/.env
 # Pin to a specific version tag or digest instead of :latest to prevent
 # uncontrolled deployments. Update IRONCLAW_VERSION in /opt/ironclaw/.env
 # or replace the tag below when deploying a new release.
-ExecStartPre=/bin/bash -c 'docker pull us-central1-docker.pkg.dev/ironclaw-prod/ironclaw/agent:${IRONCLAW_VERSION:-latest}'
-ExecStart=/bin/bash -c 'docker run --rm \
-  --name ironclaw \
-  --env-file /opt/ironclaw/.env \
+ExecStartPre=/bin/bash -c 'docker pull ${CONTAINER_IMAGE_REPO:-us-central1-docker.pkg.dev/ironclaw-prod/ironclaw/agent}:${IRONCLAW_VERSION:-latest}'
+ExecStart=/bin/bash -c 'env_file="${IRONCLAW_ENV_FILE:-/opt/ironclaw/.env}"; \
+  if [ ! -f "${env_file}" ] && [ -f /opt/chimera-iceclaw/.env ]; then env_file=/opt/chimera-iceclaw/.env; fi; \
+  docker run --rm \
+  --name ${IRONCLAW_CONTAINER_NAME:-ironclaw} \
+  --env-file "${env_file}" \
   -p 3000:3000 \
-  us-central1-docker.pkg.dev/ironclaw-prod/ironclaw/agent:${IRONCLAW_VERSION:-latest} \
+  ${CONTAINER_IMAGE_REPO:-us-central1-docker.pkg.dev/ironclaw-prod/ironclaw/agent}:${IRONCLAW_VERSION:-latest} \
   --no-onboard'
-ExecStop=/usr/bin/docker stop ironclaw
+ExecStop=/bin/bash -c 'docker stop ${IRONCLAW_CONTAINER_NAME:-ironclaw}'
 Restart=always
 RestartSec=10
 

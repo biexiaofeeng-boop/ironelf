@@ -8,6 +8,21 @@ fi
 
 WITH_PROXY=false
 TAIL_LINES="${TAIL_LINES:-80}"
+SERVICE_NAME="${SERVICE_NAME:-}"
+
+resolve_service_name() {
+  if [ -n "${SERVICE_NAME}" ]; then
+    printf '%s\n' "${SERVICE_NAME}"
+    return 0
+  fi
+
+  if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^chimera-iceclaw\.service'; then
+    printf '%s\n' "chimera-iceclaw"
+    return 0
+  fi
+
+  printf '%s\n' "ironclaw"
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -19,12 +34,22 @@ while [ $# -gt 0 ]; do
       TAIL_LINES="${2:-80}"
       shift 2
       ;;
+    --service)
+      SERVICE_NAME="${2:-}"
+      if [ -z "${SERVICE_NAME}" ]; then
+        echo "ERROR: --service requires a value"
+        exit 1
+      fi
+      shift 2
+      ;;
     *)
-      echo "Usage: sudo bash deploy/restart.sh [--with-proxy] [--tail N]"
+      echo "Usage: sudo bash deploy/restart.sh [--with-proxy] [--tail N] [--service chimera-iceclaw|ironclaw]"
       exit 1
       ;;
   esac
 done
+
+SERVICE_NAME="$(resolve_service_name)"
 
 echo "==> Reloading systemd units"
 systemctl daemon-reload
@@ -34,11 +59,11 @@ if [ "$WITH_PROXY" = true ]; then
   systemctl restart cloud-sql-proxy
 fi
 
-echo "==> Restarting ironclaw"
-systemctl restart ironclaw
+echo "==> Restarting ${SERVICE_NAME}"
+systemctl restart "${SERVICE_NAME}"
 
 echo "==> Service status"
-systemctl --no-pager --full status ironclaw
+systemctl --no-pager --full status "${SERVICE_NAME}"
 
 if [ "$WITH_PROXY" = true ]; then
   echo ""
@@ -47,4 +72,4 @@ fi
 
 echo ""
 echo "==> Recent container logs (last ${TAIL_LINES} lines)"
-docker logs --tail "${TAIL_LINES}" ironclaw
+docker logs --tail "${TAIL_LINES}" "${SERVICE_NAME}" || docker logs --tail "${TAIL_LINES}" ironclaw
