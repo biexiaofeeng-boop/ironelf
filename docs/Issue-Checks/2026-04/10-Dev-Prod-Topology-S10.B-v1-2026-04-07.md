@@ -71,6 +71,39 @@ Rust 的运行环境主要依赖：
 - 检查本机服务状态
 - 检查 gateway / runtime / models 三个 HTTP 接口
 
+## 实际执行结果
+
+### `chimera-iceclaw-dev` 已创建
+
+执行后状态：
+
+- 目录：
+  - `/Users/sourcefire/X-lab/chimera-iceclaw-dev`
+- 分支：
+  - `codex/s10b-rename-base-alignment-v1`
+- 提交：
+  - `60ac0aba13729ac1f4deaf1d2128a54304f71a05`
+- remotes：
+  - `origin = git@github.com:biexiaofeeng-boop/chimera-iceclaw.git`
+  - `ironelf-legacy = git@github.com:biexiaofeeng-boop/ironelf.git`
+- working tree：
+  - clean
+
+### `chimera-iceclaw` 已完成预发布基线验证
+
+已完成：
+
+1. `SKIP_BUILD=true bash deploy/pre_release_check.sh`
+2. `cargo build`
+
+结果：
+
+- `chimera-iceclaw` 目录已独立完成一次全量构建
+- `gateway/status` 返回正常
+- `runtime/health` 返回 `ok=true`
+- `/v1/models` 返回正常模型列表
+- 当前说明“生产/预发布基线目录”和“开发目录”已经物理分离且都可工作
+
 ## 建议使用方式
 
 ### 日常开发
