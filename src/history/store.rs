@@ -7,12 +7,16 @@ use chrono::{DateTime, Utc};
 #[cfg(feature = "postgres")]
 use deadpool_postgres::{Config, Pool};
 use rust_decimal::Decimal;
+#[cfg(feature = "postgres")]
+use tokio_postgres::error::SqlState;
 use uuid::Uuid;
 
 #[cfg(feature = "postgres")]
 use crate::config::DatabaseConfig;
 #[cfg(feature = "postgres")]
 use crate::context::{ActionRecord, JobContext, JobState};
+#[cfg(feature = "postgres")]
+use crate::control_plane::{ControlTaskAcceptance, ControlTaskRecord, TaskEventRecord};
 #[cfg(feature = "postgres")]
 use crate::error::DatabaseError;
 
@@ -544,8 +548,352 @@ impl AgentJobSummary {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ControlTaskSummaryRecord {
+    pub receipt_id: String,
+    pub intent_id: String,
+    pub task_id: String,
+    pub root_task_id: String,
+    pub source_system: String,
+    pub channel_id: Option<String>,
+    pub external_thread_id: Option<String>,
+    pub user_id: String,
+    pub project_id: Option<String>,
+    pub session_id: Option<String>,
+    pub input_text: String,
+    pub attachments_ref_json: serde_json::Value,
+    pub interaction_summary: Option<String>,
+    pub requested_goal: String,
+    pub requested_constraints_json: serde_json::Value,
+    pub priority_hint: Option<String>,
+    pub risk_hint: Option<String>,
+    pub requested_mode: Option<String>,
+    pub observed_at_utc: DateTime<Utc>,
+    pub observed_at_local: Option<String>,
+    pub timezone: String,
+    pub node_id: Option<String>,
+    pub status: String,
+    pub accepted_by: String,
+    pub accepted_at_utc: DateTime<Utc>,
+    pub queue_state: String,
+    pub next_action: String,
+    pub summary: String,
+    pub intent_payload_json: serde_json::Value,
+    pub intent_payload_hash: String,
+    pub dispatch_request_json: serde_json::Value,
+    pub latest_execution_result_json: Option<serde_json::Value>,
+}
+
+#[cfg(feature = "postgres")]
+fn control_task_from_summary(
+    summary: ControlTaskSummaryRecord,
+) -> Result<ControlTaskRecord, DatabaseError> {
+    let dispatch_request = serde_json::from_value(summary.dispatch_request_json).map_err(|e| {
+        DatabaseError::Query(format!(
+            "Failed to decode control task dispatch_request_json: {e}"
+        ))
+    })?;
+    let latest_execution_result = match summary.latest_execution_result_json {
+        Some(value) => Some(serde_json::from_value(value).map_err(|e| {
+            DatabaseError::Query(format!(
+                "Failed to decode control task latest_execution_result_json: {e}"
+            ))
+        })?),
+        None => None,
+    };
+
+    Ok(ControlTaskRecord {
+        receipt_id: summary.receipt_id,
+        intent_id: summary.intent_id,
+        task_id: summary.task_id,
+        root_task_id: summary.root_task_id,
+        source_system: summary.source_system,
+        channel_id: summary.channel_id,
+        external_thread_id: summary.external_thread_id,
+        user_id: summary.user_id,
+        project_id: summary.project_id,
+        session_id: summary.session_id,
+        input_text: summary.input_text,
+        attachments_ref: summary.attachments_ref_json,
+        interaction_summary: summary.interaction_summary,
+        requested_goal: summary.requested_goal,
+        requested_constraints: summary.requested_constraints_json,
+        priority_hint: summary.priority_hint,
+        risk_hint: summary.risk_hint,
+        requested_mode: summary.requested_mode,
+        observed_at_utc: summary.observed_at_utc,
+        observed_at_local: summary.observed_at_local,
+        timezone: summary.timezone,
+        node_id: summary.node_id,
+        status: summary.status,
+        accepted_by: summary.accepted_by,
+        accepted_at_utc: summary.accepted_at_utc,
+        queue_state: summary.queue_state,
+        next_action: summary.next_action,
+        summary: summary.summary,
+        intent_payload: summary.intent_payload_json,
+        intent_payload_hash: summary.intent_payload_hash,
+        dispatch_request,
+        latest_execution_result,
+    })
+}
+
+#[cfg(feature = "postgres")]
+fn control_task_summary_from_row(row: &tokio_postgres::Row) -> ControlTaskSummaryRecord {
+    ControlTaskSummaryRecord {
+        receipt_id: row.get("receipt_id"),
+        intent_id: row.get("intent_id"),
+        task_id: row.get("task_id"),
+        root_task_id: row.get("root_task_id"),
+        source_system: row.get("source_system"),
+        channel_id: row.get("channel_id"),
+        external_thread_id: row.get("external_thread_id"),
+        user_id: row.get("user_id"),
+        project_id: row.get("project_id"),
+        session_id: row.get("session_id"),
+        input_text: row.get("input_text"),
+        attachments_ref_json: row.get("attachments_ref_json"),
+        interaction_summary: row.get("interaction_summary"),
+        requested_goal: row.get("requested_goal"),
+        requested_constraints_json: row.get("requested_constraints_json"),
+        priority_hint: row.get("priority_hint"),
+        risk_hint: row.get("risk_hint"),
+        requested_mode: row.get("requested_mode"),
+        observed_at_utc: row.get("observed_at_utc"),
+        observed_at_local: row.get("observed_at_local"),
+        timezone: row.get("timezone"),
+        node_id: row.get("node_id"),
+        status: row.get("status"),
+        accepted_by: row.get("accepted_by"),
+        accepted_at_utc: row.get("accepted_at_utc"),
+        queue_state: row.get("queue_state"),
+        next_action: row.get("next_action"),
+        summary: row.get("summary"),
+        intent_payload_json: row.get("intent_payload_json"),
+        intent_payload_hash: row.get("intent_payload_hash"),
+        dispatch_request_json: row.get("dispatch_request_json"),
+        latest_execution_result_json: row.get("latest_execution_result_json"),
+    }
+}
+
 #[cfg(feature = "postgres")]
 impl Store {
+    pub async fn accept_control_task(
+        &self,
+        task: &ControlTaskRecord,
+        accepted_event: &TaskEventRecord,
+    ) -> Result<ControlTaskAcceptance, DatabaseError> {
+        let mut conn = self.conn().await?;
+        let tx = conn.transaction().await?;
+
+        if let Some(row) = tx
+            .query_opt(
+                "SELECT * FROM control_tasks WHERE intent_id = $1",
+                &[&task.intent_id],
+            )
+            .await?
+        {
+            let existing = control_task_from_summary(control_task_summary_from_row(&row))?;
+            tx.commit().await?;
+            return Ok(
+                if existing.intent_payload_hash == task.intent_payload_hash {
+                    ControlTaskAcceptance::Existing(existing)
+                } else {
+                    ControlTaskAcceptance::Conflict(existing)
+                },
+            );
+        }
+
+        let latest_execution_result_json: Option<serde_json::Value> = task
+            .latest_execution_result
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|e| {
+                DatabaseError::Query(format!(
+                    "Failed to encode control task latest_execution_result_json: {e}"
+                ))
+            })?;
+        let dispatch_request_json = serde_json::to_value(&task.dispatch_request).map_err(|e| {
+            DatabaseError::Query(format!(
+                "Failed to encode control task dispatch_request_json: {e}"
+            ))
+        })?;
+
+        let insert_result = tx
+            .execute(
+                r#"
+                INSERT INTO control_tasks (
+                    receipt_id, intent_id, task_id, root_task_id, source_system,
+                    channel_id, external_thread_id, user_id, project_id, session_id,
+                    input_text, attachments_ref_json, interaction_summary, requested_goal,
+                    requested_constraints_json, priority_hint, risk_hint, requested_mode,
+                    observed_at_utc, observed_at_local, timezone, node_id, status,
+                    accepted_by, accepted_at_utc, queue_state, next_action, summary,
+                    intent_payload_json, intent_payload_hash, dispatch_request_json,
+                    latest_execution_result_json
+                ) VALUES (
+                    $1, $2, $3, $4, $5,
+                    $6, $7, $8, $9, $10,
+                    $11, $12, $13, $14,
+                    $15, $16, $17, $18,
+                    $19, $20, $21, $22, $23,
+                    $24, $25, $26, $27, $28,
+                    $29, $30, $31, $32
+                )
+                "#,
+                &[
+                    &task.receipt_id,
+                    &task.intent_id,
+                    &task.task_id,
+                    &task.root_task_id,
+                    &task.source_system,
+                    &task.channel_id,
+                    &task.external_thread_id,
+                    &task.user_id,
+                    &task.project_id,
+                    &task.session_id,
+                    &task.input_text,
+                    &task.attachments_ref,
+                    &task.interaction_summary,
+                    &task.requested_goal,
+                    &task.requested_constraints,
+                    &task.priority_hint,
+                    &task.risk_hint,
+                    &task.requested_mode,
+                    &task.observed_at_utc,
+                    &task.observed_at_local,
+                    &task.timezone,
+                    &task.node_id,
+                    &task.status,
+                    &task.accepted_by,
+                    &task.accepted_at_utc,
+                    &task.queue_state,
+                    &task.next_action,
+                    &task.summary,
+                    &task.intent_payload,
+                    &task.intent_payload_hash,
+                    &dispatch_request_json,
+                    &latest_execution_result_json,
+                ],
+            )
+            .await;
+
+        if let Err(error) = insert_result {
+            if let Some(db_error) = error.as_db_error()
+                && db_error.code() == &SqlState::UNIQUE_VIOLATION
+            {
+                let row = tx
+                    .query_one(
+                        "SELECT * FROM control_tasks WHERE intent_id = $1",
+                        &[&task.intent_id],
+                    )
+                    .await?;
+                let existing = control_task_from_summary(control_task_summary_from_row(&row))?;
+                tx.commit().await?;
+                return Ok(
+                    if existing.intent_payload_hash == task.intent_payload_hash {
+                        ControlTaskAcceptance::Existing(existing)
+                    } else {
+                        ControlTaskAcceptance::Conflict(existing)
+                    },
+                );
+            }
+            return Err(DatabaseError::Query(error.to_string()));
+        }
+
+        tx.execute(
+            r#"
+            INSERT INTO control_task_events (
+                event_id, parent_event_id, task_id, event_type, producer_type,
+                producer_id, seq, attempt, causation_id, correlation_id,
+                observed_at_utc, observed_at_local, timezone, node_id, payload_json
+            ) VALUES (
+                $1, $2, $3, $4, $5,
+                $6, $7, $8, $9, $10,
+                $11, $12, $13, $14, $15
+            )
+            "#,
+            &[
+                &accepted_event.event_id,
+                &accepted_event.parent_event_id,
+                &accepted_event.task_id,
+                &accepted_event.event_type,
+                &accepted_event.producer_type,
+                &accepted_event.producer_id,
+                &accepted_event.seq,
+                &accepted_event.attempt,
+                &accepted_event.causation_id,
+                &accepted_event.correlation_id,
+                &accepted_event.observed_at_utc,
+                &accepted_event.observed_at_local,
+                &accepted_event.timezone,
+                &accepted_event.node_id,
+                &accepted_event.payload,
+            ],
+        )
+        .await?;
+
+        tx.commit().await?;
+        Ok(ControlTaskAcceptance::Inserted(task.clone()))
+    }
+
+    pub async fn get_control_task_by_intent_id(
+        &self,
+        intent_id: &str,
+    ) -> Result<Option<ControlTaskRecord>, DatabaseError> {
+        let conn = self.conn().await?;
+        let row = conn
+            .query_opt(
+                "SELECT * FROM control_tasks WHERE intent_id = $1",
+                &[&intent_id],
+            )
+            .await?;
+        row.map(|row| control_task_from_summary(control_task_summary_from_row(&row)))
+            .transpose()
+    }
+
+    pub async fn list_control_task_events(
+        &self,
+        task_id: &str,
+    ) -> Result<Vec<TaskEventRecord>, DatabaseError> {
+        let conn = self.conn().await?;
+        let rows = conn
+            .query(
+                r#"
+                SELECT event_id, parent_event_id, task_id, event_type, producer_type,
+                       producer_id, seq, attempt, causation_id, correlation_id,
+                       observed_at_utc, observed_at_local, timezone, node_id, payload_json
+                FROM control_task_events
+                WHERE task_id = $1
+                ORDER BY seq ASC, event_id ASC
+                "#,
+                &[&task_id],
+            )
+            .await?;
+
+        Ok(rows
+            .iter()
+            .map(|row| TaskEventRecord {
+                event_id: row.get("event_id"),
+                parent_event_id: row.get("parent_event_id"),
+                task_id: row.get("task_id"),
+                event_type: row.get("event_type"),
+                producer_type: row.get("producer_type"),
+                producer_id: row.get("producer_id"),
+                seq: row.get("seq"),
+                attempt: row.get("attempt"),
+                causation_id: row.get("causation_id"),
+                correlation_id: row.get("correlation_id"),
+                observed_at_utc: row.get("observed_at_utc"),
+                observed_at_local: row.get("observed_at_local"),
+                timezone: row.get("timezone"),
+                node_id: row.get("node_id"),
+                payload: row.get("payload_json"),
+            })
+            .collect())
+    }
+
     /// Insert a new sandbox job into `agent_jobs`.
     pub async fn save_sandbox_job(&self, job: &SandboxJobRecord) -> Result<(), DatabaseError> {
         let conn = self.conn().await?;

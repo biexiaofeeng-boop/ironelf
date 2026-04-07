@@ -787,6 +787,71 @@ CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash);
 "#,
     ),
+    (
+        15,
+        "control_plane",
+        r#"
+CREATE TABLE IF NOT EXISTS control_tasks (
+    receipt_id TEXT PRIMARY KEY,
+    intent_id TEXT NOT NULL UNIQUE,
+    task_id TEXT NOT NULL UNIQUE,
+    root_task_id TEXT NOT NULL,
+    source_system TEXT NOT NULL,
+    channel_id TEXT,
+    external_thread_id TEXT,
+    user_id TEXT NOT NULL,
+    project_id TEXT,
+    session_id TEXT,
+    input_text TEXT NOT NULL,
+    attachments_ref_json TEXT NOT NULL DEFAULT '[]',
+    interaction_summary TEXT,
+    requested_goal TEXT NOT NULL,
+    requested_constraints_json TEXT NOT NULL DEFAULT '{}',
+    priority_hint TEXT,
+    risk_hint TEXT,
+    requested_mode TEXT,
+    observed_at_utc TEXT NOT NULL,
+    observed_at_local TEXT,
+    timezone TEXT NOT NULL,
+    node_id TEXT,
+    status TEXT NOT NULL,
+    accepted_by TEXT NOT NULL,
+    accepted_at_utc TEXT NOT NULL,
+    queue_state TEXT NOT NULL,
+    next_action TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    intent_payload_json TEXT NOT NULL,
+    intent_payload_hash TEXT NOT NULL,
+    dispatch_request_json TEXT NOT NULL,
+    latest_execution_result_json TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_control_tasks_user ON control_tasks(user_id);
+CREATE INDEX IF NOT EXISTS idx_control_tasks_status ON control_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_control_tasks_queue_state ON control_tasks(queue_state);
+CREATE INDEX IF NOT EXISTS idx_control_tasks_accepted_at ON control_tasks(accepted_at_utc DESC);
+
+CREATE TABLE IF NOT EXISTS control_task_events (
+    event_id TEXT PRIMARY KEY,
+    parent_event_id TEXT REFERENCES control_task_events(event_id) ON DELETE SET NULL,
+    task_id TEXT NOT NULL REFERENCES control_tasks(task_id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    producer_type TEXT NOT NULL,
+    producer_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    attempt INTEGER NOT NULL DEFAULT 1,
+    causation_id TEXT,
+    correlation_id TEXT,
+    observed_at_utc TEXT NOT NULL,
+    observed_at_local TEXT,
+    timezone TEXT NOT NULL,
+    node_id TEXT,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    UNIQUE (task_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_control_task_events_task_seq ON control_task_events(task_id, seq);
+CREATE INDEX IF NOT EXISTS idx_control_task_events_correlation ON control_task_events(correlation_id);
+"#,
+    ),
 ];
 
 /// Run incremental migrations that haven't been applied yet.

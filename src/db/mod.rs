@@ -32,6 +32,7 @@ use uuid::Uuid;
 use crate::agent::BrokenTool;
 use crate::agent::routine::{Routine, RoutineRun, RunStatus};
 use crate::context::{ActionRecord, JobContext, JobState};
+use crate::control_plane::{ControlTaskAcceptance, ControlTaskRecord, TaskEventRecord};
 use crate::error::DatabaseError;
 use crate::error::WorkspaceError;
 use crate::history::{
@@ -531,6 +532,23 @@ pub trait SandboxStore: Send + Sync {
 }
 
 #[async_trait]
+pub trait ControlPlaneStore: Send + Sync {
+    async fn accept_control_task(
+        &self,
+        task: &ControlTaskRecord,
+        accepted_event: &TaskEventRecord,
+    ) -> Result<ControlTaskAcceptance, DatabaseError>;
+    async fn get_control_task_by_intent_id(
+        &self,
+        intent_id: &str,
+    ) -> Result<Option<ControlTaskRecord>, DatabaseError>;
+    async fn list_control_task_events(
+        &self,
+        task_id: &str,
+    ) -> Result<Vec<TaskEventRecord>, DatabaseError>;
+}
+
+#[async_trait]
 pub trait RoutineStore: Send + Sync {
     async fn create_routine(&self, routine: &Routine) -> Result<(), DatabaseError>;
     async fn get_routine(&self, id: Uuid) -> Result<Option<Routine>, DatabaseError>;
@@ -921,6 +939,7 @@ pub trait Database:
     ConversationStore
     + JobStore
     + SandboxStore
+    + ControlPlaneStore
     + RoutineStore
     + ToolFailureStore
     + SettingsStore

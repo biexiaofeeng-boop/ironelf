@@ -46,6 +46,7 @@ pub mod channels;
 pub mod cli;
 pub mod config;
 pub mod context;
+pub mod control_plane;
 pub mod db;
 pub mod document_extraction;
 pub mod error;

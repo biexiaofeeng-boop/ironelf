@@ -37,6 +37,7 @@ use crate::channels::web::handlers::bridge::{
     runtime_bridge_cancel_handler, runtime_bridge_events_handler, runtime_bridge_health_handler,
     runtime_bridge_submit_handler,
 };
+use crate::channels::web::handlers::control_plane::control_task_accept_handler;
 use crate::channels::web::handlers::jobs::{
     job_files_list_handler, job_files_read_handler, jobs_cancel_handler, jobs_detail_handler,
     jobs_events_handler, jobs_list_handler, jobs_prompt_handler, jobs_restart_handler,
@@ -484,6 +485,18 @@ pub async fn start_server(
         .route(
             "/api/runtime/executions/{execution_id}/cancel",
             post(runtime_bridge_cancel_handler),
+        )
+        // Control plane
+        // Canonical route: /api/control/tasks/accept
+        // Compatibility alias for chimera-core default dispatch_path:
+        // /api/controlplane/task-intents
+        .route(
+            "/api/control/tasks/accept",
+            post(control_task_accept_handler),
+        )
+        .route(
+            "/api/controlplane/task-intents",
+            post(control_task_accept_handler),
         )
         // Logs
         .route("/api/logs/events", get(logs_events_handler))

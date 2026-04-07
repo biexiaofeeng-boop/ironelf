@@ -20,6 +20,7 @@ use std::time::Instant;
 use subtle::ConstantTimeEq;
 use tokio::sync::RwLock;
 
+use crate::control_plane::{ControlPlaneErrorDetail, ControlPlaneErrorEnvelope};
 use crate::db::Database;
 use crate::runtime_bridge::{RuntimeBridgeErrorDetail, RuntimeBridgeErrorEnvelope};
 
@@ -346,6 +347,8 @@ pub async fn auth_middleware(
     next: Next,
 ) -> Response {
     let is_runtime_bridge_route = request.uri().path().starts_with("/api/runtime/");
+    let is_control_plane_route = request.uri().path().starts_with("/api/control/")
+        || request.uri().path().starts_with("/api/controlplane/");
 
     // Extract the candidate token from header or query param.
     let token = extract_token(&headers, &request);
@@ -371,6 +374,12 @@ pub async fn auth_middleware(
                             "runtime_auth_unavailable",
                             "Database unavailable during runtime bridge authentication",
                         )
+                    } else if is_control_plane_route {
+                        control_plane_auth_error(
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "control_auth_unavailable",
+                            "Database unavailable during control-plane authentication",
+                        )
                     } else {
                         (StatusCode::SERVICE_UNAVAILABLE, "Database unavailable").into_response()
                     };
@@ -384,6 +393,12 @@ pub async fn auth_middleware(
         runtime_bridge_auth_error(
             StatusCode::UNAUTHORIZED,
             "runtime_auth_invalid",
+            "Invalid or missing auth token",
+        )
+    } else if is_control_plane_route {
+        control_plane_auth_error(
+            StatusCode::UNAUTHORIZED,
+            "control_auth_invalid",
             "Invalid or missing auth token",
         )
     } else {
@@ -401,6 +416,22 @@ fn runtime_bridge_auth_error(status: StatusCode, code: &str, message: &str) -> R
                 message: message.to_string(),
             },
             execution_id: None,
+        }),
+    )
+        .into_response()
+}
+
+fn control_plane_auth_error(status: StatusCode, code: &str, message: &str) -> Response {
+    (
+        status,
+        Json(ControlPlaneErrorEnvelope {
+            schema_version: "v1".to_string(),
+            error: ControlPlaneErrorDetail {
+                code: code.to_string(),
+                message: message.to_string(),
+            },
+            intent_id: None,
+            task_id: None,
         }),
     )
         .into_response()
@@ -511,6 +542,8 @@ mod tests {
             .route("/api/chat/history", get(dummy_handler))
             .route("/api/chat/send", post(dummy_handler))
             .route("/api/runtime/health", get(dummy_handler))
+            .route("/api/control/tasks/accept", post(dummy_handler))
+            .route("/api/controlplane/task-intents", post(dummy_handler))
             .layer(middleware::from_fn_with_state(state, auth_middleware))
     }
 
@@ -552,6 +585,40 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(payload["schema_version"], "v1");
         assert_eq!(payload["error"]["code"], "runtime_auth_invalid");
+    }
+
+    #[tokio::test]
+    async fn test_control_plane_invalid_token_returns_json_error() {
+        let app = test_app(TEST_AUTH_SECRET_TOKEN);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/control/tasks/accept")
+            .header("Authorization", "Bearer wrong-token")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["schema_version"], "v1");
+        assert_eq!(payload["error"]["code"], "control_auth_invalid");
+    }
+
+    #[tokio::test]
+    async fn test_control_plane_legacy_route_invalid_token_returns_json_error() {
+        let app = test_app(TEST_AUTH_SECRET_TOKEN);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/controlplane/task-intents")
+            .header("Authorization", "Bearer wrong-token")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["schema_version"], "v1");
+        assert_eq!(payload["error"]["code"], "control_auth_invalid");
     }
 
     #[tokio::test]

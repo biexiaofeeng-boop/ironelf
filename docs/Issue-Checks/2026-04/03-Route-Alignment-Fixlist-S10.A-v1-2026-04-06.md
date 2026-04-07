@@ -1,5 +1,18 @@
 # 03-Route-Alignment-Fixlist-S10.A-v1-2026-04-06
 
+## 回填结果
+
+本清单已于 2026-04-07 收口完成。
+
+完成情况：
+
+- `/api/control/tasks/accept` 保持为 canonical route
+- `/api/controlplane/task-intents` 已作为 compatibility alias 接入同一 handler
+- auth middleware 已同时覆盖 `/api/control/` 与 `/api/controlplane/`
+- legacy route success / invalid auth tests 已补齐并通过
+- `task.accepted` 事件时间已改为 acceptance 真正发生时间，源观察时间保留在 payload 中
+- 本机跨仓 live smoke 已验证 `chimera-core` 默认路径兼容
+
 ## 目的
 
 给 `ironelf` 开发线程一份直接可执行的“路由对齐修复点”清单，用于收口 S10.A 最小 control-plane handoff。

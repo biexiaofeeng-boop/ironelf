@@ -15,9 +15,10 @@ use crate::agent::BrokenTool;
 use crate::agent::routine::{Routine, RoutineRun, RunStatus};
 use crate::config::DatabaseConfig;
 use crate::context::{ActionRecord, JobContext, JobState};
+use crate::control_plane::{ControlTaskAcceptance, ControlTaskRecord, TaskEventRecord};
 use crate::db::{
-    ApiTokenRecord, ConversationStore, Database, JobStore, RoutineStore, SandboxStore,
-    SettingsStore, ToolFailureStore, UserRecord, UserStore, WorkspaceStore,
+    ApiTokenRecord, ControlPlaneStore, ConversationStore, Database, JobStore, RoutineStore,
+    SandboxStore, SettingsStore, ToolFailureStore, UserRecord, UserStore, WorkspaceStore,
 };
 use crate::error::{DatabaseError, WorkspaceError};
 use crate::history::{
@@ -415,6 +416,31 @@ impl SandboxStore for PgBackend {
         limit: Option<i64>,
     ) -> Result<Vec<JobEventRecord>, DatabaseError> {
         self.store.list_job_events(job_id, limit).await
+    }
+}
+
+#[async_trait]
+impl ControlPlaneStore for PgBackend {
+    async fn accept_control_task(
+        &self,
+        task: &ControlTaskRecord,
+        accepted_event: &TaskEventRecord,
+    ) -> Result<ControlTaskAcceptance, DatabaseError> {
+        self.store.accept_control_task(task, accepted_event).await
+    }
+
+    async fn get_control_task_by_intent_id(
+        &self,
+        intent_id: &str,
+    ) -> Result<Option<ControlTaskRecord>, DatabaseError> {
+        self.store.get_control_task_by_intent_id(intent_id).await
+    }
+
+    async fn list_control_task_events(
+        &self,
+        task_id: &str,
+    ) -> Result<Vec<TaskEventRecord>, DatabaseError> {
+        self.store.list_control_task_events(task_id).await
     }
 }
 

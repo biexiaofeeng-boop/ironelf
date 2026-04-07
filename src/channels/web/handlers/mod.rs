@@ -3,6 +3,7 @@
 //! Each module groups related endpoint handlers by domain.
 
 pub mod bridge;
+pub mod control_plane;
 pub mod jobs;
 pub mod memory;
 pub mod routines;

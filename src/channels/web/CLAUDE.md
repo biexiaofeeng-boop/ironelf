@@ -69,6 +69,12 @@ Browser-facing HTTP API and SSE/WebSocket real-time streaming. Axum-based, singl
 | GET | `/api/runtime/executions/{execution_id}/events` | Poll structured runtime events with a cursor |
 | POST | `/api/runtime/executions/{execution_id}/cancel` | Cancel a runtime execution and return a receipt |
 
+### Control Plane
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/control/tasks/accept` | Canonical control-plane accept route; accepts a durable `TaskIntent` and mints a stable `TaskReceipt` |
+| POST | `/api/controlplane/task-intents` | Compatibility alias for `chimera-core` legacy/default dispatch path; returns the same `TaskReceipt` shape |
+
 ### Skills
 | Method | Path | Description |
 |--------|------|-------------|
